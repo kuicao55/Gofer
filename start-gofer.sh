@@ -7,6 +7,7 @@ PID_FILE="${GOFER_PID_FILE:-$HOME/.local/state/gofer/gofer.pid}"
 LOG_FILE="${GOFER_LOG_FILE:-$HOME/.local/state/gofer/gofer.log}"
 BIND="${GOFER_BIND:-127.0.0.1:8790}"
 DB="${GOFER_DB:-$HOME/.local/state/gofer/gofer.db}"
+SCRIPTS="${GOFER_SCRIPTS_DIR:-$ROOT/scripts}"
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")" "$(dirname "$DB")"
 cmd="${1:-start}"; shift || true
 build=0; for a in "$@"; do [ "$a" = "--build" ] && build=1; done
@@ -20,7 +21,8 @@ case "$cmd" in
   start)
     if alive "$pid"; then echo "gofer already running pid=$pid"; exit 0; fi
     echo "==> starting gofer on $BIND"
-    nohup env GOFER_DB="$DB" GOFER_PID_FILE="$PID_FILE" GOFER_LOG_FILE="$LOG_FILE" \
+    nohup env GOFER_DB="$DB" GOFER_SCRIPTS_DIR="$SCRIPTS" \
+      GOFER_PID_FILE="$PID_FILE" GOFER_LOG_FILE="$LOG_FILE" \
       "$BIN" serve --bind "$BIND" >>"$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 0.6

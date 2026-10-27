@@ -19,6 +19,8 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GOFER_DB</key>
     <string>/Users/kuicao/.local/state/gofer/gofer.db</string>
+    <key>GOFER_SCRIPTS_DIR</key>
+    <string>/Users/kuicao/Applications/Gofer/scripts</string>
     <!-- 留空 = 不校验 token；设置后所有 /v1 请求需带 X-Gofer-Token -->
     <key>GOFER_TOKEN</key>
     <string></string>

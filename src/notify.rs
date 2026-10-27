@@ -9,15 +9,37 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-/// Scripts directory. Override with `GOFER_SCRIPTS_DIR` when the binary and
-/// scripts live in different places.
+/// Scripts directory.
+///
+/// Release binaries are built on GitHub Actions, so compile-time paths such as
+/// `CARGO_MANIFEST_DIR` point at `/Users/runner/...` and must not be used at
+/// runtime. Search next to the executable (repo checkout) first, then common
+/// install locations; `GOFER_SCRIPTS_DIR` always wins.
 pub fn scripts_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("GOFER_SCRIPTS_DIR") {
         if !dir.trim().is_empty() {
             return PathBuf::from(dir);
         }
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts")
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for anc in dir.ancestors().take(5) {
+                candidates.push(anc.join("scripts"));
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("scripts"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("Applications/Gofer/scripts"));
+    }
+    candidates
+        .into_iter()
+        .find(|p| p.join("xhs-notify.py").is_file() || p.join("wechat-notify-fast.py").is_file())
+        .unwrap_or_else(|| PathBuf::from("scripts"))
 }
 
 fn script(name: &str) -> PathBuf {
