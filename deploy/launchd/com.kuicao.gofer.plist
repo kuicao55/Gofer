@@ -29,6 +29,12 @@
     <string>true</string>
     <key>GOFER_RETENTION_DAYS</key>
     <string>30</string>
+    <!-- 面板更新：launchd 模式退出后由 KeepAlive 拉起新二进制 -->
+    <key>GOFER_SUPERVISED</key>
+    <string>launchd</string>
+    <!-- 私有仓库更新需要只读 contents token -->
+    <key>GOFER_UPDATE_TOKEN</key>
+    <string></string>
     <key>MAOYAN_BOOKER_DIR</key>
     <string>/Users/kuicao/Applications/maoyan-booker</string>
     <!-- 可选：小红书 session 过期时把二维码发到 Discord -->

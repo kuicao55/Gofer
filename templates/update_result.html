@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Update · Gofer{% endblock %}
+{% block content %}
+{% if ok %}<meta http-equiv="refresh" content="5;url=/">{% endif %}
+<section class="hero" style="padding-bottom:14px">
+  <div>
+    <p class="eyebrow">Maintenance</p>
+    <h1>{{ title }}</h1>
+    <p class="lede">{{ message }}</p>
+  </div>
+</section>
+<section class="card">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Status</p>
+      <h2>{% if ok %}更新已提交{% else %}未修改当前版本{% endif %}</h2>
+      <p>{% if ok %}服务重启后本页会自动刷新。{% else %}修复问题后可以重新检查。{% endif %}</p>
+    </div>
+    <span class="badge {% if ok %}on{% else %}bad{% endif %}">{% if ok %}OK{% else %}FAILED{% endif %}</span>
+  </div>
+  {% if !ok %}<div class="alert-strip">{{ message }}</div>{% endif %}
+  <div class="form-actions">
+    <a class="btn ghost" href="/update">返回更新页</a>
+    <a class="btn ghost" href="/">返回总览</a>
+  </div>
+</section>
+{% endblock %}

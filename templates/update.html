@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Update · Gofer{% endblock %}
+{% block content %}
+<section class="hero" style="padding-bottom:14px">
+  <div>
+    <p class="eyebrow">Maintenance</p>
+    <h1>Updates.</h1>
+    <p class="lede">从 GitHub Release 检查并安装 Gofer。更新会替换当前二进制并重启服务。</p>
+  </div>
+  <div class="hero-meta">
+    <span class="mono">current v{{ info.current }}</span>
+    <a class="btn ghost small" href="/update">重新检查</a>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">GitHub Releases</p>
+      <h2>{% if info.error != "" %}检查失败{% else if info.newer %}有新版本{% else %}已是最新{% endif %}</h2>
+      <p>
+        当前版本 <span class="mono">v{{ info.current }}</span>
+        {% if info.latest != "" %} · 最新 <span class="mono">{{ info.tag }}</span>{% endif %}
+      </p>
+    </div>
+    {% if info.newer && info.error == "" %}
+    <span class="badge warn">可更新</span>
+    {% else if info.error == "" %}
+    <span class="badge on">最新</span>
+    {% else %}
+    <span class="badge bad">错误</span>
+    {% endif %}
+  </div>
+
+  {% if info.error != "" %}
+  <div class="alert-strip">{{ info.error }}</div>
+  <p class="form-note" style="margin-top:12px">
+    公开仓库通常不需要 token；如果遇到 GitHub 限流或私有 release，请给服务配置 <span class="mono">GOFER_UPDATE_TOKEN</span>。
+  </p>
+  {% else %}
+  <div class="health-row"><span class="health-key">发布</span><span class="health-val mono">{{ info.tag }}</span></div>
+  <div class="health-row"><span class="health-key">发布时间</span><span class="health-val mono">{{ info.published_at }}</span></div>
+  <div class="health-row"><span class="health-key">平台资产</span><span class="health-val mono">{{ info.asset_name }}</span></div>
+  {% if info.html_url != "" %}
+  <div class="health-row"><span class="health-key">Release</span><span class="health-val"><a href="{{ info.html_url }}" target="_blank" rel="noreferrer">在 GitHub 查看</a></span></div>
+  {% endif %}
+
+  {% if info.notes != "" %}
+  <div style="margin-top:16px">
+    <p class="eyebrow">Release notes</p>
+    <pre class="release-notes">{{ info.notes }}</pre>
+  </div>
+  {% endif %}
+
+  {% if info.newer %}
+  <form method="post" action="/actions/update/install" style="margin-top:18px"
+        onsubmit="return confirm('将下载并替换当前 tt-server，随后服务会重启。继续？')">
+    <button class="btn clay" type="submit">安装 {{ info.tag }} 并重启</button>
+  </form>
+  {% else %}
+  <p class="form-note" style="margin-top:18px">当前已经是最新版本，无需更新。</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

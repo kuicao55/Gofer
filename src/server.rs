@@ -167,6 +167,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/", get(web::dashboard))
         .route("/requests", get(web::requests_page))
         .route("/actions/service/toggle", post(toggle_service))
+        .route("/update", get(web::update_page))
+        .route("/actions/update/install", post(web::action_update_install))
         .route("/health", get(health))
         .route("/api/v1/health", get(health))
         .route("/api/v1/capabilities", get(capabilities_api))

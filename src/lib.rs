@@ -14,4 +14,5 @@ pub mod db;
 pub mod lock;
 pub mod notify;
 pub mod server;
+pub mod update;
 pub mod web;

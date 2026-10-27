@@ -488,6 +488,41 @@ curl -H 'X-Gofer-Token: change-me' \
 
 ---
 
+## 面板更新
+
+访问 `http://127.0.0.1:8790/update`：
+
+1. 检查 GitHub Releases 最新版本；
+2. 显示 release notes；
+3. 下载当前 Mac 架构的 `gofer-<arch>-apple-darwin`；
+4. 校验 `SHA256SUMS`；
+5. 替换二进制并重启。
+
+Gofer 仓库是私有的，所以部署机器需要只读 GitHub token：
+
+```bash
+export GOFER_UPDATE_TOKEN='github_pat_...'   # contents: read
+```
+
+launchd 模板里也要填 `GOFER_UPDATE_TOKEN`，并设置
+`GOFER_SUPERVISED=launchd`，这样更新后由 KeepAlive 拉起新进程。
+用 `start-gofer.sh` 启动时不需要 supervised，Gofer 会用重启助手接管 PID/日志。
+
+发版：
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+Release 资产：
+
+```text
+gofer-aarch64-apple-darwin
+gofer-x86_64-apple-darwin
+SHA256SUMS
+```
+
 ## macOS 后台运行 / Mac mini 部署
 
 ### 方案 A：`start-gofer.sh`（最简单）
@@ -606,6 +641,9 @@ Gofer token: 与 Gofer 的 GOFER_TOKEN 一致
 | `GOFER_RETENTION_DAYS` | 请求历史保留天数 | `30` |
 | `GOFER_SCRIPTS_DIR` | 通知脚本目录 | `<repo>/scripts` |
 | `MAOYAN_BOOKER_DIR` | booker 项目目录 | `~/Applications/maoyan-booker` |
+| `GOFER_UPDATE_TOKEN` | GitHub 只读 token；私有仓库更新必填 | 空 |
+| `GOFER_UPDATE_API_BASE` | 可选；GitHub API/镜像地址 | `https://api.github.com` |
+| `GOFER_SUPERVISED` | `launchd` 时更新后由 launchd 重启 | 空 |
 | `XHS_WEBHOOK` | 小红书 session 过期时发二维码的 Discord webhook（可选） | 空 |
 | `GOFER_URL` | CLI 默认服务地址 | `http://127.0.0.1:8790` |
 

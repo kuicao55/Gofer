@@ -20,7 +20,8 @@ case "$cmd" in
   start)
     if alive "$pid"; then echo "gofer already running pid=$pid"; exit 0; fi
     echo "==> starting gofer on $BIND"
-    nohup env GOFER_DB="$DB" "$BIN" serve --bind "$BIND" >>"$LOG_FILE" 2>&1 &
+    nohup env GOFER_DB="$DB" GOFER_PID_FILE="$PID_FILE" GOFER_LOG_FILE="$LOG_FILE" \
+      "$BIN" serve --bind "$BIND" >>"$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 0.6
     curl -fsS --max-time 2 "http://127.0.0.1:${BIND##*:}/health" >/dev/null && echo "✓ http://$BIND" || { echo "✗ failed"; tail -20 "$LOG_FILE"; exit 1; }

@@ -102,6 +102,26 @@ struct DashboardTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "update.html")]
+struct UpdateTemplate {
+    version: String,
+    now: String,
+    page: String,
+    info: crate::update::UpdateInfo,
+}
+
+#[derive(Template)]
+#[template(path = "update_result.html")]
+struct UpdateResultTemplate {
+    version: String,
+    now: String,
+    page: String,
+    ok: bool,
+    title: String,
+    message: String,
+}
+
+#[derive(Template)]
 #[template(path = "requests.html")]
 struct RequestsTemplate {
     version: String,
@@ -141,6 +161,49 @@ pub async fn requests_page(State(st): State<Arc<AppState>>) -> Response {
         requests,
     };
     render(&t).into_response()
+}
+
+pub async fn update_page() -> Response {
+    let info = crate::update::check().await;
+    let t = UpdateTemplate {
+        version: server::VERSION.to_string(),
+        now: now_label(),
+        page: "update".into(),
+        info,
+    };
+    render(&t).into_response()
+}
+
+pub async fn action_update_install() -> Response {
+    match crate::update::install_latest().await {
+        Ok(out) => {
+            crate::update::schedule_exit();
+            let t = UpdateResultTemplate {
+                version: server::VERSION.to_string(),
+                now: now_label(),
+                page: "update".into(),
+                ok: true,
+                title: format!("已更新到 {}", out.version),
+                message: if out.supervised {
+                    "服务正在由 launchd 重启；几秒后刷新页面。".into()
+                } else {
+                    "已替换二进制，重启助手会在当前进程退出后拉起新版本；几秒后刷新页面。".into()
+                },
+            };
+            render(&t).into_response()
+        }
+        Err(e) => {
+            let t = UpdateResultTemplate {
+                version: server::VERSION.to_string(),
+                now: now_label(),
+                page: "update".into(),
+                ok: false,
+                title: "更新失败".into(),
+                message: e.to_string(),
+            };
+            render(&t).into_response()
+        }
+    }
 }
 
 async fn build_dashboard(st: &Arc<AppState>) -> anyhow::Result<DashboardTemplate> {

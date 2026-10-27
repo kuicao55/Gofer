@@ -648,3 +648,11 @@ dialog p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
 .switch.on .switch-knob::after { transform: translateX(10px); }
 .switch.paused { color: var(--warn); border-color: #e2d3b3; background: #f7efdd; }
 .switch.paused .switch-knob { background: var(--warn); }
+
+/* ---------- update page ---------- */
+.release-notes {
+  margin: 8px 0 0; padding: 12px 14px; border: 1px solid var(--surface-2);
+  border-radius: 12px; background: var(--surface-3); color: var(--ink-soft);
+  font-family: var(--mono); font-size: 11px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto;
+}
