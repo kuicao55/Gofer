@@ -93,6 +93,7 @@ struct DashboardTemplate {
     base_url: String,
     token_on: bool,
     dry_run: bool,
+    paused: bool,
     stats: StatsView,
     caps_ready: usize,
     caps_total: usize,
@@ -108,6 +109,7 @@ struct RequestsTemplate {
     page: String,
     base_url: String,
     token_on: bool,
+    paused: bool,
     count: usize,
     requests: Vec<RequestView>,
 }
@@ -134,6 +136,7 @@ pub async fn requests_page(State(st): State<Arc<AppState>>) -> Response {
         page: "requests".into(),
         base_url: st.base_url.clone(),
         token_on: st.token.is_some(),
+        paused: st.is_paused(),
         count: requests.len(),
         requests,
     };
@@ -253,6 +256,7 @@ async fn build_dashboard(st: &Arc<AppState>) -> anyhow::Result<DashboardTemplate
         base_url: st.base_url.clone(),
         token_on: st.token.is_some(),
         dry_run: st.dry_run,
+        paused: st.is_paused(),
         stats,
         caps_ready,
         caps_total,

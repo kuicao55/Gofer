@@ -12,6 +12,13 @@
       <p class="lede">任何知道地址和 token 的应用，都可以让 Gofer 发微信、发小红书或锁一张猫眼票。</p>
     </div>
     <div class="hero-meta">
+      <form method="post" action="/actions/service/toggle">
+        <button class="switch {% if paused %}paused{% else %}on{% endif %}" type="submit"
+                title="{% if paused %}恢复 Gofer{% else %}暂停 Gofer{% endif %}">
+          <span class="switch-knob"></span>
+          <span>{% if paused %}已暂停{% else %}运行中{% endif %}</span>
+        </button>
+      </form>
       <span class="badge {% if token_on %}ok{% else %}warn{% endif %}">
         {% if token_on %}token 已启用{% else %}token 未设置{% endif %}
       </span>
@@ -152,8 +159,8 @@
     <div class="card">
       <div class="card-head">
         <div><p class="eyebrow">API</p><h2>接入</h2></div>
-        <span class="badge {% if token_on %}on{% else %}flat{% endif %}">
-          {% if token_on %}需要 token{% else %}无 token{% endif %}
+        <span class="badge {% if paused %}warn{% else %}{% if token_on %}on{% else %}flat{% endif %}{% endif %}">
+          {% if paused %}已暂停{% else %}{% if token_on %}需要 token{% else %}无 token{% endif %}{% endif %}
         </span>
       </div>
       <div class="health-row"><span class="health-key">Base URL</span><span class="health-val mono">{{ base_url }}</span></div>
@@ -161,7 +168,7 @@
       <div class="health-row"><span class="health-key">通知</span><span class="health-val mono">POST /v1/notify</span></div>
       <div class="health-row"><span class="health-key">锁票</span><span class="health-val mono">POST /v1/lock</span></div>
       <div class="health-row"><span class="health-key">查询</span><span class="health-val mono">GET /v1/requests/:id</span></div>
-      <p class="form-note" style="margin-top:12px">请求是异步的：返回 202 + request_id，结果通过请求状态查询或面板查看。</p>
+      <p class="form-note" style="margin-top:12px">请求是异步的：返回 202 + request_id，结果通过请求状态查询或面板查看。{% if paused %} 当前服务已暂停，新的通知/锁票请求会返回 503。{% endif %}</p>
     </div>
 
     <div class="card">

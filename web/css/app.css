@@ -623,3 +623,28 @@ dialog p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
 @media (max-width: 980px) {
   .cap-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- service switch ---------- */
+.switch {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-3); color: var(--muted);
+  padding: 4px 10px 4px 5px; cursor: pointer;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.switch-knob {
+  width: 26px; height: 16px; border-radius: 999px;
+  background: var(--muted-2); position: relative; display: inline-block;
+  transition: background 0.15s;
+}
+.switch-knob::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--card); transition: transform 0.15s;
+}
+.switch.on { color: var(--ok); border-color: #b8cabb; background: #eef3ed; }
+.switch.on .switch-knob { background: var(--ok); }
+.switch.on .switch-knob::after { transform: translateX(10px); }
+.switch.paused { color: var(--warn); border-color: #e2d3b3; background: #f7efdd; }
+.switch.paused .switch-knob { background: var(--warn); }

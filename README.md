@@ -479,6 +479,8 @@ curl -H 'X-Gofer-Token: change-me' \
 
 - **Overview**：三项能力、预检状态、24h 请求量/成功率、队列、最近请求。
 - **Requests**：完整请求历史（最多 200 条），含 request_id、耗时、来源、结果/错误。
+- 顶部开关可暂停/恢复 Gofer；暂停后 `/v1/notify` 和 `/v1/lock` 返回 `503`，
+  已在执行的任务会完成，状态会持久化到 SQLite。
 - 每 5 秒自动刷新。
 - 面板是只读的；操作通过 CLI / HTTP 发起。
 

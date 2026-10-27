@@ -7,6 +7,18 @@ use gofer::server::{self, AppState};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+async fn state_with_paused(token: Option<&str>, dry_run: bool, paused: bool) -> Arc<AppState> {
+    let db = Db::connect_memory().await.unwrap();
+    AppState::new(
+        db,
+        token.map(String::from),
+        dry_run,
+        true,
+        "http://127.0.0.1:8790",
+        paused,
+    )
+}
+
 async fn state(token: Option<&str>, dry_run: bool) -> Arc<AppState> {
     let db = Db::connect_memory().await.unwrap();
     AppState::new(
@@ -15,6 +27,7 @@ async fn state(token: Option<&str>, dry_run: bool) -> Arc<AppState> {
         dry_run,
         true,
         "http://127.0.0.1:8790",
+        false,
     )
 }
 
@@ -154,4 +167,98 @@ async fn lock_requires_cinema_and_show_date() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn paused_service_rejects_new_requests() {
+    let st = state_with_paused(None, true, true).await;
+    let app = server::router(st);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/notify")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"channel": "wechat", "message": "hello"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn service_switch_pauses_and_resumes() {
+    let st = state(None, true).await;
+    let app = server::router(st.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/actions/service/toggle")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["paused"], true);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/notify")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"channel": "wechat", "message": "hello"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/actions/service/toggle")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["paused"], false);
 }

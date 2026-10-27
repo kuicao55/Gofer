@@ -11,6 +11,12 @@
       <p class="lede">最近 {{ count }} 条外部请求。状态、耗时和错误都来自本地 SQLite。</p>
     </div>
     <div class="hero-meta">
+      <form method="post" action="/actions/service/toggle">
+        <button class="switch {% if paused %}paused{% else %}on{% endif %}" type="submit">
+          <span class="switch-knob"></span>
+          <span>{% if paused %}已暂停{% else %}运行中{% endif %}</span>
+        </button>
+      </form>
       <span class="mono muted">{{ base_url }}</span>
       <span class="badge {% if token_on %}on{% else %}flat{% endif %}">
         {% if token_on %}token 已启用{% else %}无 token{% endif %}

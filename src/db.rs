@@ -229,6 +229,27 @@ impl Db {
             .await?)
     }
 
+    pub async fn paused(&self) -> Result<bool> {
+        let v: i64 = sqlx::query_scalar("SELECT paused FROM service_state WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await?
+            .unwrap_or(0);
+        Ok(v != 0)
+    }
+
+    pub async fn set_paused(&self, paused: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO service_state(id, paused, updated_at)
+             VALUES (1, ?, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET paused = excluded.paused,
+                                           updated_at = datetime('now')",
+        )
+        .bind(if paused { 1 } else { 0 })
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn total_count(&self) -> Result<i64> {
         Ok(sqlx::query_scalar("SELECT COUNT(*) FROM requests")
             .fetch_one(&self.pool)
@@ -286,6 +307,16 @@ mod tests {
         assert_eq!(caps.len(), 1);
         assert_eq!(caps[0].capability, "wechat");
         assert_eq!(caps[0].ok, 1);
+    }
+
+    #[tokio::test]
+    async fn paused_state_roundtrip() {
+        let db = Db::connect_memory().await.unwrap();
+        assert!(!db.paused().await.unwrap());
+        db.set_paused(true).await.unwrap();
+        assert!(db.paused().await.unwrap());
+        db.set_paused(false).await.unwrap();
+        assert!(!db.paused().await.unwrap());
     }
 
     #[tokio::test]

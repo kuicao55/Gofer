@@ -1,7 +1,7 @@
 //! HTTP service, request queues and shared state.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -58,7 +58,6 @@ pub fn default_db_path() -> String {
     base.join("gofer").join("gofer.db").display().to_string()
 }
 
-#[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub started_at: f64,
@@ -71,6 +70,7 @@ pub struct AppState {
     pub notify_queue: Arc<AtomicUsize>,
     pub lock_queue: Arc<AtomicUsize>,
     pub http: reqwest::Client,
+    pub paused: AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +109,7 @@ impl AppState {
         dry_run: bool,
         lock_headless: bool,
         base_url: impl Into<String>,
+        paused: bool,
     ) -> Arc<Self> {
         let (notify_tx, notify_rx) = mpsc::channel::<NotifyJob>(64);
         let (lock_tx, lock_rx) = mpsc::channel::<LockJob>(16);
@@ -127,6 +128,7 @@ impl AppState {
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("gofer http client"),
+            paused: AtomicBool::new(paused),
         });
         tokio::spawn(notify_worker(state.clone(), notify_rx));
         tokio::spawn(lock_worker(state.clone(), lock_rx));
@@ -135,6 +137,14 @@ impl AppState {
 
     pub fn diagnostics(&self) -> (Vec<Check>, Ready) {
         capabilities::diagnostics()
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
     }
 
     pub fn queues(&self) -> (usize, usize) {
@@ -156,6 +166,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(web::dashboard))
         .route("/requests", get(web::requests_page))
+        .route("/actions/service/toggle", post(toggle_service))
         .route("/health", get(health))
         .route("/api/v1/health", get(health))
         .route("/api/v1/capabilities", get(capabilities_api))
@@ -250,11 +261,21 @@ async fn health(State(st): State<Arc<AppState>>) -> impl IntoResponse {
         "version": VERSION,
         "uptime_sec": (now_secs() - st.started_at).max(0.0) as u64,
         "dry_run": st.dry_run,
+        "paused": st.is_paused(),
         "token_required": st.token.is_some(),
         "queue": {"notify": notify_q, "lock": lock_q},
         "ready": ready,
         "checks": checks,
     }))
+}
+
+async fn toggle_service(State(st): State<Arc<AppState>>) -> Response {
+    let next = !st.is_paused();
+    st.set_paused(next);
+    if let Err(e) = st.db.set_paused(next).await {
+        tracing::warn!("persist paused state failed: {e}");
+    }
+    axum::response::Redirect::to("/").into_response()
 }
 
 async fn capabilities_api(State(st): State<Arc<AppState>>) -> impl IntoResponse {
@@ -308,6 +329,9 @@ async fn notify_handler(
 ) -> Response {
     if let Err(r) = auth(&st, &headers) {
         return *r;
+    }
+    if st.is_paused() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "gofer is paused").into_response();
     }
     let channel = req.channel.trim().to_lowercase();
     if channel != "wechat" && channel != "xhs" {
@@ -376,6 +400,9 @@ async fn lock_handler(
 ) -> Response {
     if let Err(r) = auth(&st, &headers) {
         return *r;
+    }
+    if st.is_paused() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "gofer is paused").into_response();
     }
     if req.cinema_id.trim().is_empty() || req.show_date.trim().is_empty() {
         return (
@@ -692,12 +719,14 @@ pub async fn run(cfg: ServerConfig) -> Result<()> {
     let db = Db::connect(&cfg.db)
         .await
         .with_context(|| format!("初始化 Gofer 数据库失败: {}", cfg.db))?;
+    let paused = db.paused().await.unwrap_or(false);
     let state = AppState::new(
         db.clone(),
         cfg.token,
         cfg.dry_run,
         cfg.lock_headless,
         base_url_for_bind(&cfg.bind),
+        paused,
     );
     tracing::info!(
         "gofer listening on http://{}  db={}  token={}",
