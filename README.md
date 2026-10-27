@@ -522,6 +522,15 @@ gofer-x86_64-apple-darwin
 SHA256SUMS
 ```
 
+二进制会按顺序查找通知脚本：`GOFER_SCRIPTS_DIR`、可执行文件附近的 `scripts/`、
+`~/Applications/Gofer/scripts`。只复制二进制到别处时，请设置：
+
+```bash
+export GOFER_SCRIPTS_DIR=/path/to/Gofer/scripts
+```
+
+`start-gofer.sh` 会自动设置 `GOFER_SCRIPTS_DIR=$ROOT/scripts`。
+
 ## macOS 后台运行 / Mac mini 部署
 
 ### 方案 A：`start-gofer.sh`（最简单）
@@ -773,6 +782,24 @@ pkill -f 'tt-agent'
 
 - 通知队列 64 / 锁票队列 16 已满。
 - 等 worker 消化后重试；不要无界并发发通知。
+
+### 更新后提示“通知脚本未找到”
+
+Release 二进制不再使用编译机路径。确认：
+
+```bash
+echo "$GOFER_SCRIPTS_DIR"
+ls "$GOFER_SCRIPTS_DIR/wechat-notify-fast.py" "$GOFER_SCRIPTS_DIR/xhs-notify.py"
+```
+
+如果为空或路径不存在：
+
+```bash
+export GOFER_SCRIPTS_DIR=/Users/你的用户名/Applications/Gofer/scripts
+./start-gofer.sh restart
+```
+
+或直接从 Gofer 仓库目录用 `start-gofer.sh` 启动。
 
 ### 请求一直 `queued`
 
