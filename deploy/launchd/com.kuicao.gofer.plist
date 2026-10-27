@@ -32,7 +32,7 @@
     <!-- 面板更新：launchd 模式退出后由 KeepAlive 拉起新二进制 -->
     <key>GOFER_SUPERVISED</key>
     <string>launchd</string>
-    <!-- 私有仓库更新需要只读 contents token -->
+    <!-- 可选：GitHub 只读 token，避免 API 限流 -->
     <key>GOFER_UPDATE_TOKEN</key>
     <string></string>
     <key>MAOYAN_BOOKER_DIR</key>

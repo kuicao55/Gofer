@@ -178,10 +178,10 @@ async fn fetch_latest() -> Result<LatestRelease> {
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        let hint = if status == 401 || status == 403 || status == 404 {
-            "（私有仓库或限流：请配置 GOFER_UPDATE_TOKEN）"
-        } else {
-            ""
+        let hint = match status.as_u16() {
+            404 => "（仓库还没有发布 Release）",
+            401 | 403 => "（限流或私有仓库：请配置 GOFER_UPDATE_TOKEN）",
+            _ => "",
         };
         return Err(anyhow!(
             "GitHub API {} {}{}",

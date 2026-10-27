@@ -35,7 +35,7 @@
   {% if info.error != "" %}
   <div class="alert-strip">{{ info.error }}</div>
   <p class="form-note" style="margin-top:12px">
-    公开仓库通常不需要 token；如果遇到 GitHub 限流或私有 release，请给服务配置 <span class="mono">GOFER_UPDATE_TOKEN</span>。
+    如果遇到 GitHub 限流或私有 release，请给服务配置 <span class="mono">GOFER_UPDATE_TOKEN</span>。
   </p>
   {% else %}
   <div class="health-row"><span class="health-key">发布</span><span class="health-val mono">{{ info.tag }}</span></div>

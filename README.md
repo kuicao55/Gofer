@@ -498,14 +498,13 @@ curl -H 'X-Gofer-Token: change-me' \
 4. 校验 `SHA256SUMS`；
 5. 替换二进制并重启。
 
-Gofer 仓库是私有的，所以部署机器需要只读 GitHub token：
+Gofer 仓库现在是公开仓库，通常不需要 token。如果遇到 GitHub 限流，可以配置只读 token：
 
 ```bash
-export GOFER_UPDATE_TOKEN='github_pat_...'   # contents: read
+export GOFER_UPDATE_TOKEN='github_pat_...'   # contents: read，可选
 ```
 
-launchd 模板里也要填 `GOFER_UPDATE_TOKEN`，并设置
-`GOFER_SUPERVISED=launchd`，这样更新后由 KeepAlive 拉起新进程。
+launchd 模板里设置 `GOFER_SUPERVISED=launchd`，这样更新后由 KeepAlive 拉起新进程。
 用 `start-gofer.sh` 启动时不需要 supervised，Gofer 会用重启助手接管 PID/日志。
 
 发版：
@@ -641,7 +640,7 @@ Gofer token: 与 Gofer 的 GOFER_TOKEN 一致
 | `GOFER_RETENTION_DAYS` | 请求历史保留天数 | `30` |
 | `GOFER_SCRIPTS_DIR` | 通知脚本目录 | `<repo>/scripts` |
 | `MAOYAN_BOOKER_DIR` | booker 项目目录 | `~/Applications/maoyan-booker` |
-| `GOFER_UPDATE_TOKEN` | GitHub 只读 token；私有仓库更新必填 | 空 |
+| `GOFER_UPDATE_TOKEN` | 可选；GitHub 只读 token，避免限流 | 空 |
 | `GOFER_UPDATE_API_BASE` | 可选；GitHub API/镜像地址 | `https://api.github.com` |
 | `GOFER_SUPERVISED` | `launchd` 时更新后由 launchd 重启 | 空 |
 | `XHS_WEBHOOK` | 小红书 session 过期时发二维码的 Discord webhook（可选） | 空 |
