@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Gofer{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg?v={{ version }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ version }}">
+  <script src="/static/js/htmx.min.js?v={{ version }}" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark"></span><span>Gofer</span></a>
+      <nav class="nav" aria-label="Main">
+        <a href="/" class="{% if page == "overview" %}active{% endif %}">Overview</a>
+        <a href="/requests" class="{% if page == "requests" %}active{% endif %}">Requests</a>
+      </nav>
+      <div class="topbar-meta">
+        <span class="mono">v{{ version }}</span>
+        <span class="mono muted">{{ now }}</span>
+      </div>
+    </header>
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

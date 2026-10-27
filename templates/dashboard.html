@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Gofer · Overview{% endblock %}
+{% block content %}
+<div id="gofer-root"
+     hx-get="/" hx-trigger="every 5s"
+     hx-select="#gofer-root" hx-swap="outerHTML">
+
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Local action service</p>
+      <h1>Do the local<br>work.</h1>
+      <p class="lede">任何知道地址和 token 的应用，都可以让 Gofer 发微信、发小红书或锁一张猫眼票。</p>
+    </div>
+    <div class="hero-meta">
+      <span class="badge {% if token_on %}ok{% else %}warn{% endif %}">
+        {% if token_on %}token 已启用{% else %}token 未设置{% endif %}
+      </span>
+      <span class="badge {% if dry_run %}warn{% else %}flat{% endif %}">
+        {% if dry_run %}通知 dry-run{% else %}真实执行{% endif %}
+      </span>
+      <span class="mono muted">up {{ uptime }}</span>
+    </div>
+  </section>
+
+  <section class="kpi-grid">
+    <div class="kpi card">
+      <div class="label">Requests · 24h</div>
+      <div class="value">{{ stats.total }}</div>
+      <div class="foot">all-time {{ stats.all_total }}</div>
+    </div>
+    <div class="kpi card">
+      <div class="label">Success rate</div>
+      <div class="value">{{ stats.success_rate }}</div>
+      <div class="foot">{{ stats.ok }} ok · {{ stats.failed }} failed</div>
+    </div>
+    <div class="kpi card">
+      <div class="label">Queued</div>
+      <div class="value">{{ stats.queued }}</div>
+      <div class="foot">等待 worker</div>
+    </div>
+    <div class="kpi card">
+      <div class="label">Running</div>
+      <div class="value">{{ stats.running }}</div>
+      <div class="foot">正在执行</div>
+    </div>
+    <div class="kpi card">
+      <div class="label">Capabilities</div>
+      <div class="value">{{ caps_ready }}/{{ caps_total }}</div>
+      <div class="foot">静态预检就绪</div>
+    </div>
+    <div class="kpi card">
+      <div class="label">Uptime</div>
+      <div class="value">{{ uptime }}</div>
+      <div class="foot">since last restart</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Capabilities</p>
+        <h2>能力</h2>
+        <p>状态来自本机静态检查；实际登录态/群名以请求结果为准。</p>
+      </div>
+      <span class="pill">{{ caps_total }} capabilities</span>
+    </div>
+    <div class="cap-grid">
+      {% for cap in capabilities %}
+      <div class="cap-card" data-capability="{{ cap.id }}">
+        <div class="channel-head">
+          <span class="channel-type">{{ cap.label }}</span>
+          <span class="badge {{ cap.status_class }}">{{ cap.status_text }}</span>
+        </div>
+        <div class="cap-sub">{{ cap.subtitle }}</div>
+        <div class="health-row">
+          <span class="health-key">预检</span>
+          <span class="health-val">{{ cap.checks_ok }}/{{ cap.checks_total }}</span>
+        </div>
+        <div class="health-row">
+          <span class="health-key">24h 请求</span>
+          <span class="health-val">{{ cap.requests_24h }}</span>
+        </div>
+        <div class="health-row">
+          <span class="health-key">成功 / 失败</span>
+          <span class="health-val">{{ cap.ok_24h }} / {{ cap.failed_24h }}</span>
+        </div>
+        <div class="health-row">
+          <span class="health-key">队列</span>
+          <span class="health-val">{{ cap.queue }}</span>
+        </div>
+        <div class="health-row">
+          <span class="health-key">最近请求</span>
+          <span class="health-val mono">{{ cap.last_at }}</span>
+        </div>
+        <div class="cap-checks">
+          {% for c in cap.checks %}
+          <div class="health-row">
+            <span class="health-key"><span class="status-dot {% if c.ok %}ok{% else %}bad{% endif %}"></span>{{ c.label }}</span>
+            <span class="health-val mono">{{ c.detail }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% if !cap.last_error.is_empty() %}
+        <div class="alert-strip">{{ cap.last_error }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Requests</p>
+        <h2>最近请求</h2>
+        <p>外部应用 push 进来的动作，按接收时间倒序。</p>
+      </div>
+      <a class="btn ghost small" href="/requests">全部</a>
+    </div>
+    {% if requests.is_empty() %}
+    <div class="empty">还没有请求。用 CLI 或 HTTP 发一条试试。</div>
+    {% else %}
+    <div class="req-list">
+      <div class="req-head">
+        <span>时间</span>
+        <span>能力</span>
+        <span>状态</span>
+        <span class="req-dur">耗时</span>
+        <span>来源</span>
+        <span>内容 / 结果</span>
+      </div>
+      {% for r in requests %}
+      <div class="req-row">
+        <div class="req-time">{{ r.time }}<div class="req-id">{{ r.id }}</div></div>
+        <div class="req-cap"><span class="cap-dot {{ r.capability_class }}"></span>{{ r.capability }}</div>
+        <div class="req-status"><span class="badge {{ r.status_class }}">{{ r.status_text }}</span></div>
+        <div class="req-dur">{{ r.duration }}</div>
+        <div class="req-source">{{ r.source }}</div>
+        <div class="req-content">
+          <div class="req-title">{{ r.title }}</div>
+          {% if !r.preview.is_empty() %}<div class="req-preview">{{ r.preview }}</div>{% endif %}
+          {% if r.show_summary %}<div class="req-ok">{{ r.summary }}</div>{% endif %}
+          {% if !r.error.is_empty() %}<div class="req-error">{{ r.error }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="grid-two">
+    <div class="card">
+      <div class="card-head">
+        <div><p class="eyebrow">API</p><h2>接入</h2></div>
+        <span class="badge {% if token_on %}on{% else %}flat{% endif %}">
+          {% if token_on %}需要 token{% else %}无 token{% endif %}
+        </span>
+      </div>
+      <div class="health-row"><span class="health-key">Base URL</span><span class="health-val mono">{{ base_url }}</span></div>
+      <div class="health-row"><span class="health-key">Auth</span><span class="health-val mono">{% if token_on %}X-Gofer-Token / Bearer{% else %}—{% endif %}</span></div>
+      <div class="health-row"><span class="health-key">通知</span><span class="health-val mono">POST /v1/notify</span></div>
+      <div class="health-row"><span class="health-key">锁票</span><span class="health-val mono">POST /v1/lock</span></div>
+      <div class="health-row"><span class="health-key">查询</span><span class="health-val mono">GET /v1/requests/:id</span></div>
+      <p class="form-note" style="margin-top:12px">请求是异步的：返回 202 + request_id，结果通过请求状态查询或面板查看。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><p class="eyebrow">CLI</p><h2>命令行</h2></div>
+      </div>
+      <pre class="code-block">gofer notify --channel wechat -m "放票了"
+gofer notify --channel xhs --group "群名" -m "放票了"
+gofer lock --cinema-id 37534 --movie-id 1545360 \
+  --show-date 2026-11-12 --num-seats 2
+gofer requests --limit 20</pre>
+      <p class="form-note">设置 <span class="mono">GOFER_URL</span> / <span class="mono">GOFER_TOKEN</span> 后，CLI 可直接调用远端 Gofer。</p>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Gofer · Requests{% endblock %}
+{% block content %}
+<div id="requests-root"
+     hx-get="/requests" hx-trigger="every 5s"
+     hx-select="#requests-root" hx-swap="outerHTML">
+  <section class="hero" style="padding-bottom:14px">
+    <div>
+      <p class="eyebrow">Request log</p>
+      <h1>Requests.</h1>
+      <p class="lede">最近 {{ count }} 条外部请求。状态、耗时和错误都来自本地 SQLite。</p>
+    </div>
+    <div class="hero-meta">
+      <span class="mono muted">{{ base_url }}</span>
+      <span class="badge {% if token_on %}on{% else %}flat{% endif %}">
+        {% if token_on %}token 已启用{% else %}无 token{% endif %}
+      </span>
+      <a class="btn ghost small" href="/">Overview</a>
+    </div>
+  </section>
+
+  <section class="card">
+    {% if requests.is_empty() %}
+    <div class="empty">还没有请求。</div>
+    {% else %}
+    <div class="req-list">
+      <div class="req-head">
+        <span>时间</span>
+        <span>能力</span>
+        <span>状态</span>
+        <span class="req-dur">耗时</span>
+        <span>来源</span>
+        <span>内容 / 结果</span>
+      </div>
+      {% for r in requests %}
+      <div class="req-row">
+        <div class="req-time">{{ r.time }}<div class="req-id">{{ r.id }}</div></div>
+        <div class="req-cap"><span class="cap-dot {{ r.capability_class }}"></span>{{ r.capability }}</div>
+        <div class="req-status"><span class="badge {{ r.status_class }}">{{ r.status_text }}</span></div>
+        <div class="req-dur">{{ r.duration }}</div>
+        <div class="req-source">{{ r.source }}</div>
+        <div class="req-content">
+          <div class="req-title">{{ r.title }}</div>
+          {% if !r.preview.is_empty() %}<div class="req-preview">{{ r.preview }}</div>{% endif %}
+          {% if r.show_summary %}<div class="req-ok">{{ r.summary }}</div>{% endif %}
+          {% if !r.error.is_empty() %}<div class="req-error">{{ r.error }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

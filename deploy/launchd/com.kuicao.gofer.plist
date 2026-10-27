@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kuicao.gofer</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kuicao/Applications/Gofer/target/release/gofer</string>
+    <string>serve</string>
+    <string>--bind</string>
+    <string>127.0.0.1:8790</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GOFER_DB</key>
+    <string>/Users/kuicao/.local/state/gofer/gofer.db</string>
+    <!-- 留空 = 不校验 token；设置后所有 /v1 请求需带 X-Gofer-Token -->
+    <key>GOFER_TOKEN</key>
+    <string></string>
+    <!-- 只影响微信/小红书通知；锁票始终真锁 -->
+    <key>GOFER_DRY_RUN</key>
+    <string>false</string>
+    <key>GOFER_LOCK_HEADLESS</key>
+    <string>true</string>
+    <key>GOFER_RETENTION_DAYS</key>
+    <string>30</string>
+    <key>MAOYAN_BOOKER_DIR</key>
+    <string>/Users/kuicao/Applications/maoyan-booker</string>
+    <!-- 可选：小红书 session 过期时把二维码发到 Discord -->
+    <key>XHS_WEBHOOK</key>
+    <string></string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/kuicao/Library/Logs/gofer.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kuicao/Library/Logs/gofer.log</string>
+</dict>
+</plist>
