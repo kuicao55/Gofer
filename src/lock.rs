@@ -27,8 +27,8 @@ pub const LOCK_TIMEOUT_SECS: u64 = 180;
 /// booker 真锁成功后，用户需要在猫眼 App 限时支付的时间（README 提示 15 分钟）。
 pub const PAY_WINDOW_MINUTES: u64 = 15;
 
-/// booker 项目目录（默认 `~/Applications/maoyan-booker`）。可被 `MAOYAN_BOOKER_DIR` 覆盖，
-/// 便于集成测试指向别的沙箱副本。
+/// booker 项目目录（默认 `~/Applications/maoyan-booker`）。可被 `MAOYAN_BOOKER_DIR` 覆盖。
+/// Gofer 使用它作为 uv/Playwright 环境和 profile 目录；锁票脚本本身内置在 Gofer 中。
 pub fn booker_dir() -> PathBuf {
     if let Ok(d) = std::env::var("MAOYAN_BOOKER_DIR") {
         if !d.is_empty() {
@@ -41,9 +41,14 @@ pub fn booker_dir() -> PathBuf {
         .join("maoyan-booker")
 }
 
-/// booker 的截图目录。
+/// Vendored lock script (embedded in release binaries, materialised at runtime).
+pub fn booker_script() -> PathBuf {
+    crate::notify::scripts_dir().join("gofer-booker.py")
+}
+
+/// booker 的截图目录（relative to the vendored script）。
 pub fn booker_screenshots_dir() -> PathBuf {
-    booker_dir().join("screenshots")
+    crate::notify::scripts_dir().join("screenshots")
 }
 
 /// 一次锁票调用按 README 表分类的结果。
@@ -113,15 +118,29 @@ pub struct LockArgs {
 }
 
 fn build_command(a: &LockArgs) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new("uv");
-    cmd.args(["run", "python", "booker.py"])
-        .arg("--cinema-id")
+    let booker = booker_dir();
+    let script = booker_script();
+    let venv_python = booker.join(".venv/bin/python");
+    let mut cmd = if venv_python.exists() {
+        let mut cmd = tokio::process::Command::new(venv_python);
+        cmd.arg(&script);
+        cmd
+    } else {
+        let mut cmd = tokio::process::Command::new("uv");
+        cmd.arg("run")
+            .arg("--project")
+            .arg(&booker)
+            .arg("python")
+            .arg(&script);
+        cmd
+    };
+    cmd.arg("--cinema-id")
         .arg(&a.cinema_id)
         .arg("--movie-id")
         .arg(a.movie_id.to_string())
         .arg("--show-date")
         .arg(&a.show_date)
-        .current_dir(booker_dir())
+        .current_dir(&booker)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -266,8 +285,9 @@ impl LockRun {
 /// 定案前若超时则强杀并标记 `Timeout`。启动失败返回 `Err`，其余不会 panic。
 /// 调用方拿到 `LockRun` 应尽快 `decided()` 发通知，再 `complete()` 回收进程。
 pub async fn run_lock(a: &LockArgs) -> Result<LockRun> {
-    if !booker_dir().join("booker.py").exists() {
-        return Err(anyhow!("booker.py 不存在: {}", booker_dir().display()));
+    let script = booker_script();
+    if !script.exists() {
+        return Err(anyhow!("锁票脚本不存在: {}", script.display()));
     }
     let started = std::time::Instant::now();
     let mut child = build_command(a)
@@ -469,5 +489,12 @@ mod tests {
             elapsed: Duration::from_secs(0),
         };
         assert_eq!(f.summary(), "[lock] 20:00 pick 失败: caught");
+    }
+
+    #[test]
+    fn vendored_lock_script_exists() {
+        let script = booker_script();
+        assert!(script.is_file(), "missing {}", script.display());
+        assert_eq!(script.file_name().unwrap(), "gofer-booker.py");
     }
 }

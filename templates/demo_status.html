@@ -1,0 +1,32 @@
+<div id="demo-status" hx-get="/demo/status" hx-trigger="every 2s" hx-swap="outerHTML">
+  {% if request_id.is_empty() %}
+  <div class="empty">还没有演示记录。点击上方“开始演示”。</div>
+  {% else %}
+  <div class="health-row"><span class="health-key">状态</span><span class="badge {% if running %}warn{% else %}{{ db_status_class }}{% endif %}">{% if running %}{{ phase }}{% else %}{{ db_status }}{% endif %}</span></div>
+  <div class="health-row"><span class="health-key">阶段</span><span class="health-val">{{ phase }}</span></div>
+  <div class="health-row"><span class="health-key">影院</span><span class="health-val">{{ cinema_name }}</span></div>
+  <div class="health-row"><span class="health-key">请求</span><span class="health-val mono">{{ request_id }}</span></div>
+  <div class="health-row"><span class="health-key">耗时</span><span class="health-val mono">{{ elapsed }}</span></div>
+  {% if !last_line.is_empty() %}
+  <div class="health-row"><span class="health-key">最后输出</span><span class="health-val mono">{{ last_line }}</span></div>
+  {% endif %}
+  {% if !db_summary.is_empty() %}
+  <div class="req-ok" style="margin-top:10px">{{ db_summary }}</div>
+  {% endif %}
+  {% if !db_error.is_empty() %}
+  <div class="req-error" style="margin-top:10px">{{ db_error }}</div>
+  {% endif %}
+  {% if running %}
+  <form method="post" action="/actions/demo/stop" style="margin-top:14px"
+        onsubmit="return confirm('停止演示并关闭浏览器？不会提交订单。')">
+    <button class="btn ghost" type="submit">停止演示</button>
+  </form>
+  <p class="form-note" style="margin-top:10px">演示运行中，状态每 2 秒刷新。浏览器在 Mac mini 上保持打开。</p>
+  {% endif %}
+  {% if has_screenshot %}
+  <div class="demo-shot">
+    <img src="/demo/screenshot?v={{ screenshot_version }}" alt="最新演示截图">
+  </div>
+  {% endif %}
+  {% endif %}
+</div>

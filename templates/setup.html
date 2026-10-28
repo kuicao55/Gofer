@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Gofer · 初始化管理员</title>
+  <link rel="icon" href="/static/favicon.svg?v={{ version }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ version }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark"></span><span>Gofer</span></a>
+      <div class="topbar-meta">
+        <span class="mono">v{{ version }}</span>
+        <span class="mono muted">{{ now }}</span>
+      </div>
+    </header>
+
+    <main class="auth-wrap">
+      <section class="card auth-card">
+        <p class="eyebrow">First run</p>
+        <h1>设置管理员密码</h1>
+        <p class="lede">这个密码只用于登录面板，和 API token 无关。请至少使用 8 个字符。</p>
+
+        {% if !error.is_empty() %}
+        <div class="alert-strip">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" action="/setup" class="form-grid" style="margin-top:18px">
+          <div class="form-field full">
+            <label for="password">管理员密码</label>
+            <input class="input" id="password" name="password" type="password"
+                   autocomplete="new-password" minlength="8" maxlength="256" required autofocus>
+          </div>
+          <div class="form-field full">
+            <label for="confirm">再次输入</label>
+            <input class="input" id="confirm" name="confirm" type="password"
+                   autocomplete="new-password" minlength="8" maxlength="256" required>
+          </div>
+          <div class="form-actions full">
+            <button class="btn clay" type="submit">创建并进入面板</button>
+          </div>
+        </form>
+
+        <p class="form-note" style="margin-top:14px">
+          忘记密码时，可在启动环境里设置 <span class="mono">GOFER_ADMIN_PASSWORD</span> 后重启；
+          新密码会写回数据库，之后可以移除该环境变量。
+        </p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

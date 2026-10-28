@@ -1,6 +1,6 @@
 [package]
 name = "gofer"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 description = "Local action service: WeChat / Xiaohongshu notifications and Maoyan ticket locking"
 license = "MIT"
@@ -31,6 +31,10 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 
 anyhow = "1"
 sha2 = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
+rand = "0.8"
+subtle = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

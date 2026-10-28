@@ -17,6 +17,7 @@ pub struct Ready {
     pub wechat: bool,
     pub xhs: bool,
     pub lock: bool,
+    pub demo: bool,
 }
 
 pub fn diagnostics() -> (Vec<Check>, Ready) {
@@ -26,8 +27,9 @@ pub fn diagnostics() -> (Vec<Check>, Ready) {
     let xhs_script = scripts.join("xhs-notify.py");
     let xhs_profile = PathBuf::from(&home).join(".agent-browser/profiles/xiaohongshu");
     let booker_dir = crate::lock::booker_dir();
-    let booker_py = booker_dir.join("booker.py");
+    let booker_env = booker_dir.join("pyproject.toml");
     let booker_profile = PathBuf::from(&home).join(".maoyan-booker-profile");
+    let lock_script = scripts.join("gofer-booker.py");
 
     let python3 = find_on_path("python3");
     let agent_browser = find_on_path("agent-browser");
@@ -80,13 +82,49 @@ pub fn diagnostics() -> (Vec<Check>, Ready) {
     checks.push(bin_check("uv", "uv", uv.as_deref()));
     checks.push(path_check(
         "booker",
-        "maoyan-booker",
-        &booker_py.to_string_lossy(),
+        "maoyan-booker 环境",
+        &booker_env.to_string_lossy(),
+    ));
+    checks.push(path_check(
+        "lock_script",
+        "锁票脚本",
+        &lock_script.to_string_lossy(),
     ));
     checks.push(path_check(
         "booker_profile",
         "booker 登录 profile",
         &booker_profile.to_string_lossy(),
+    ));
+
+    let demo_script = scripts.join("gofer-seat-demo.py");
+    checks.push(path_check(
+        "demo_script",
+        "锁票演示脚本",
+        &demo_script.to_string_lossy(),
+    ));
+    let demo_venv = booker_dir.join(".venv/bin/python");
+    let demo_python_env = std::env::var("GOFER_DEMO_PYTHON")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let demo_python_ok = demo_python_env
+        .as_deref()
+        .map(|p| PathBuf::from(p).exists() || find_on_path(p).is_some())
+        .unwrap_or(false)
+        || demo_venv.exists()
+        || uv.is_some();
+    checks.push(check(
+        "demo_python",
+        "演示 Python/uv",
+        demo_python_ok,
+        if let Some(p) = demo_python_env {
+            p
+        } else if demo_venv.exists() {
+            demo_venv.display().to_string()
+        } else if let Some(uv) = uv.as_deref() {
+            uv.display().to_string()
+        } else {
+            "未找到 GOFER_DEMO_PYTHON / .venv / uv".to_string()
+        },
     ));
 
     let ok = |id: &str| checks.iter().find(|c| c.id == id).is_some_and(|c| c.ok);
@@ -97,7 +135,12 @@ pub fn diagnostics() -> (Vec<Check>, Ready) {
             && ok("xhs_script")
             && ok("agent_browser")
             && ok("xhs_profile"),
-        lock: ok("macos") && ok("uv") && ok("booker") && ok("booker_profile"),
+        lock: ok("macos") && ok("uv") && ok("booker") && ok("lock_script") && ok("booker_profile"),
+        demo: ok("macos")
+            && ok("demo_script")
+            && ok("demo_python")
+            && ok("booker")
+            && ok("booker_profile"),
     };
     (checks, ready)
 }
@@ -175,10 +218,13 @@ mod tests {
             "uv",
             "booker",
             "booker_profile",
+            "lock_script",
+            "demo_script",
+            "demo_python",
         ] {
             assert!(checks.iter().any(|c| c.id == id), "missing check {id}");
         }
-        let _ = (ready.wechat, ready.xhs, ready.lock);
+        let _ = (ready.wechat, ready.xhs, ready.lock, ready.demo);
     }
 
     #[test]

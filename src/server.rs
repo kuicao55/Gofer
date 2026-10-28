@@ -2,12 +2,13 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -15,8 +16,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
+use crate::auth::{self, ApiToken, AuthState, TokenSource};
 use crate::capabilities::{self, Check, Ready};
 use crate::db::{CapabilityStat, Db, RequestRow, Stats24h};
+use crate::demo::{self, DemoConfig, DemoJob, DemoShared};
+use crate::discord;
 use crate::lock::{self, LockArgs, LockResult};
 use crate::notify;
 use crate::web;
@@ -27,9 +31,19 @@ pub struct ServerConfig {
     pub bind: String,
     pub db: String,
     pub token: Option<String>,
+    /// Optional panel admin password reset, read from GOFER_ADMIN_PASSWORD.
+    pub admin_password: Option<String>,
+    pub public_url: Option<String>,
+    pub cookie_secure: bool,
     pub dry_run: bool,
     pub lock_headless: bool,
     pub retention_days: u32,
+    pub demo_city_id: u32,
+    pub demo_cinema_id: Option<String>,
+    pub demo_movie_id: Option<String>,
+    pub demo_timeout_secs: u64,
+    pub demo_python: Option<String>,
+    pub demo_cmd: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -38,14 +52,23 @@ impl Default for ServerConfig {
             bind: "127.0.0.1:8790".into(),
             db: default_db_path(),
             token: None,
+            admin_password: None,
+            public_url: None,
+            cookie_secure: false,
             dry_run: false,
             lock_headless: true,
             retention_days: 30,
+            demo_city_id: 10,
+            demo_cinema_id: None,
+            demo_movie_id: None,
+            demo_timeout_secs: 600,
+            demo_python: None,
+            demo_cmd: None,
         }
     }
 }
 
-pub fn default_db_path() -> String {
+pub fn default_state_dir() -> PathBuf {
     let base = std::env::var("XDG_STATE_HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -55,22 +78,51 @@ pub fn default_db_path() -> String {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".local/state")
         });
-    base.join("gofer").join("gofer.db").display().to_string()
+    base.join("gofer")
+}
+
+pub fn default_db_path() -> String {
+    default_state_dir().join("gofer.db").display().to_string()
 }
 
 pub struct AppState {
     pub db: Db,
     pub started_at: f64,
     pub base_url: String,
-    pub token: Option<String>,
+    pub public_url: Option<String>,
+    pub cookie_secure: bool,
+    pub api: RwLock<ApiToken>,
+    pub env_token: Option<String>,
+    pub token_updated_at: RwLock<Option<String>>,
+    pub auth: Arc<AuthState>,
     pub dry_run: bool,
     pub lock_headless: bool,
     pub notify_tx: mpsc::Sender<NotifyJob>,
     pub lock_tx: mpsc::Sender<LockJob>,
+    pub demo_tx: mpsc::Sender<DemoJob>,
     pub notify_queue: Arc<AtomicUsize>,
     pub lock_queue: Arc<AtomicUsize>,
+    pub demo_queue: Arc<AtomicUsize>,
+    pub demo: Arc<DemoShared>,
+    pub demo_cfg: DemoConfig,
+    pub browser_lock: Arc<tokio::sync::Mutex<()>>,
     pub http: reqwest::Client,
     pub paused: AtomicBool,
+}
+
+pub struct AppStateInit {
+    pub db: Db,
+    pub api: ApiToken,
+    pub env_token: Option<String>,
+    pub token_updated_at: Option<String>,
+    pub auth: Arc<AuthState>,
+    pub dry_run: bool,
+    pub lock_headless: bool,
+    pub base_url: String,
+    pub public_url: Option<String>,
+    pub cookie_secure: bool,
+    pub paused: bool,
+    pub demo_cfg: DemoConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +133,8 @@ pub struct NotifyJob {
     pub message: String,
     pub url: Option<String>,
     pub group: Option<String>,
+    /// Resolved at enqueue time. Panel tests may override the global dry-run.
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -103,27 +157,45 @@ pub struct LockJob {
 }
 
 impl AppState {
-    pub fn new(
-        db: Db,
-        token: Option<String>,
-        dry_run: bool,
-        lock_headless: bool,
-        base_url: impl Into<String>,
-        paused: bool,
-    ) -> Arc<Self> {
+    pub fn new(init: AppStateInit) -> Arc<Self> {
+        let AppStateInit {
+            db,
+            api,
+            env_token,
+            token_updated_at,
+            auth,
+            dry_run,
+            lock_headless,
+            base_url,
+            public_url,
+            cookie_secure,
+            paused,
+            demo_cfg,
+        } = init;
         let (notify_tx, notify_rx) = mpsc::channel::<NotifyJob>(64);
         let (lock_tx, lock_rx) = mpsc::channel::<LockJob>(16);
+        let (demo_tx, demo_rx) = mpsc::channel::<DemoJob>(2);
         let state = Arc::new(Self {
             db,
             started_at: now_secs(),
-            base_url: base_url.into(),
-            token: token.filter(|t| !t.trim().is_empty()),
+            base_url,
+            public_url,
+            cookie_secure,
+            api: RwLock::new(api),
+            env_token,
+            token_updated_at: RwLock::new(token_updated_at),
+            auth,
             dry_run,
             lock_headless,
             notify_tx,
             lock_tx,
+            demo_tx,
             notify_queue: Arc::new(AtomicUsize::new(0)),
             lock_queue: Arc::new(AtomicUsize::new(0)),
+            demo_queue: Arc::new(AtomicUsize::new(0)),
+            demo: Arc::new(DemoShared::default()),
+            demo_cfg,
+            browser_lock: Arc::new(tokio::sync::Mutex::new(())),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
@@ -132,6 +204,7 @@ impl AppState {
         });
         tokio::spawn(notify_worker(state.clone(), notify_rx));
         tokio::spawn(lock_worker(state.clone(), lock_rx));
+        tokio::spawn(demo::demo_worker(state.clone(), demo_rx));
         state
     }
 
@@ -154,6 +227,47 @@ impl AppState {
         )
     }
 
+    pub fn api_token(&self) -> Option<String> {
+        self.api
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .value
+            .clone()
+    }
+
+    pub fn token_required(&self) -> bool {
+        self.api.read().unwrap_or_else(|e| e.into_inner()).is_on()
+    }
+
+    pub fn token_source(&self) -> TokenSource {
+        self.api.read().unwrap_or_else(|e| e.into_inner()).source
+    }
+
+    pub fn set_api_token(&self, value: Option<String>, source: TokenSource) {
+        *self.api.write().unwrap_or_else(|e| e.into_inner()) = ApiToken { value, source };
+    }
+
+    pub fn token_updated_at(&self) -> Option<String> {
+        self.token_updated_at
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn set_token_updated_at(&self, value: Option<String>) {
+        *self
+            .token_updated_at
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = value;
+    }
+
+    pub fn display_base_url(&self) -> String {
+        self.public_url
+            .clone()
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| self.base_url.clone())
+    }
+
     pub async fn stats(&self) -> Result<(Stats24h, Vec<CapabilityStat>, Vec<RequestRow>)> {
         let stats = self.db.stats_24h().await?;
         let caps = self.db.capability_stats().await?;
@@ -163,12 +277,43 @@ impl AppState {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let protected = Router::new()
         .route("/", get(web::dashboard))
         .route("/requests", get(web::requests_page))
-        .route("/actions/service/toggle", post(toggle_service))
+        .route("/settings", get(web::settings_page))
+        .route("/tests", get(web::tests_page))
+        .route("/demo", get(web::demo_page))
         .route("/update", get(web::update_page))
+        .route("/actions/service/toggle", post(toggle_service))
         .route("/actions/update/install", post(web::action_update_install))
+        .route("/actions/lock/webhook", post(web::action_lock_webhook))
+        .route(
+            "/actions/lock/webhook/test",
+            post(web::action_lock_webhook_test),
+        )
+        .route("/actions/token/rotate", post(web::action_token_rotate))
+        .route(
+            "/actions/token/reset-env",
+            post(web::action_token_reset_env),
+        )
+        .route("/actions/test/wechat", post(web::action_test_wechat))
+        .route("/actions/test/xhs", post(web::action_test_xhs))
+        .route("/actions/demo/start", post(web::action_demo_start))
+        .route("/actions/demo/stop", post(web::action_demo_stop))
+        .route("/tests/status", get(web::test_status_fragment))
+        .route("/demo/status", get(web::demo_status_fragment))
+        .route("/demo/logs", get(web::demo_logs_fragment))
+        .route("/demo/screenshot", get(web::demo_screenshot))
+        .route("/logout", post(web::logout))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_admin,
+        ));
+
+    Router::new()
+        .merge(protected)
+        .route("/login", get(web::login_page).post(web::login_submit))
+        .route("/setup", get(web::setup_page).post(web::setup_submit))
         .route("/health", get(health))
         .route("/api/v1/health", get(health))
         .route("/api/v1/capabilities", get(capabilities_api))
@@ -257,6 +402,7 @@ struct ListQuery {
 async fn health(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     let (checks, ready) = st.diagnostics();
     let (notify_q, lock_q) = st.queues();
+    let demo_q = st.demo_queue.load(Ordering::SeqCst);
     Json(json!({
         "ok": true,
         "service": "gofer",
@@ -264,8 +410,10 @@ async fn health(State(st): State<Arc<AppState>>) -> impl IntoResponse {
         "uptime_sec": (now_secs() - st.started_at).max(0.0) as u64,
         "dry_run": st.dry_run,
         "paused": st.is_paused(),
-        "token_required": st.token.is_some(),
-        "queue": {"notify": notify_q, "lock": lock_q},
+        "token_required": st.token_required(),
+        "token_source": st.token_source().label(),
+        "queue": {"notify": notify_q, "lock": lock_q, "demo": demo_q},
+        "demo_running": st.demo.is_running(),
         "ready": ready,
         "checks": checks,
     }))
@@ -324,6 +472,78 @@ async fn stats_api(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respo
     }
 }
 
+pub(crate) struct NotifyEnqueue<'a> {
+    pub channel: &'a str,
+    pub title: Option<&'a str>,
+    pub message: &'a str,
+    pub url: Option<&'a str>,
+    pub group: Option<&'a str>,
+    pub source: &'a str,
+    pub payload: Value,
+    /// None = use the global GOFER_DRY_RUN. Some(true/false) overrides it for
+    /// this job (used by the panel test forms).
+    pub dry_run: Option<bool>,
+}
+
+pub(crate) async fn enqueue_notify(
+    st: &Arc<AppState>,
+    req: NotifyEnqueue<'_>,
+) -> Result<String, (StatusCode, String)> {
+    let channel = req.channel.trim().to_lowercase();
+    if channel != "wechat" && channel != "xhs" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "channel must be wechat or xhs".into(),
+        ));
+    }
+    if req.message.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "message is required".into()));
+    }
+    let group = req
+        .group
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .map(String::from);
+    if channel == "xhs" && group.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "xhs requires group".into()));
+    }
+    let title = req
+        .title
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            if channel == "xhs" {
+                "Gofer · 小红书"
+            } else {
+                "Gofer · 微信"
+            }
+            .into()
+        });
+    let id = new_id();
+    let preview = preview_text(req.message);
+    st.db
+        .insert_queued(&id, &channel, req.source, &title, &preview, &req.payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let job = NotifyJob {
+        request_id: id.clone(),
+        channel: channel.clone(),
+        title,
+        message: req.message.to_string(),
+        url: req.url.map(String::from),
+        group,
+        dry_run: req.dry_run.unwrap_or(st.dry_run),
+    };
+    if st.notify_tx.try_send(job).is_err() {
+        let _ = st.db.fail_queued(&id, "notify queue full").await;
+        return Err((StatusCode::TOO_MANY_REQUESTS, "notify queue full".into()));
+    }
+    st.notify_queue.fetch_add(1, Ordering::SeqCst);
+    Ok(id)
+}
+
 async fn notify_handler(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -336,12 +556,6 @@ async fn notify_handler(
         return (StatusCode::SERVICE_UNAVAILABLE, "gofer is paused").into_response();
     }
     let channel = req.channel.trim().to_lowercase();
-    if channel != "wechat" && channel != "xhs" {
-        return (StatusCode::BAD_REQUEST, "channel must be wechat or xhs").into_response();
-    }
-    if req.message.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, "message is required").into_response();
-    }
     let group = req.group.clone().or_else(|| {
         req.config
             .as_ref()
@@ -349,50 +563,30 @@ async fn notify_handler(
             .and_then(|v| v.as_str())
             .map(String::from)
     });
-    if channel == "xhs" && group.as_deref().unwrap_or("").trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, "xhs requires group").into_response();
-    }
-    let title = req
-        .title
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            if channel == "xhs" {
-                "Gofer · 小红书"
-            } else {
-                "Gofer · 微信"
-            }
-            .into()
-        });
     let source = request_source(&headers, req.source.as_deref());
-    let id = new_id();
-    let preview = preview_text(&req.message);
     let payload = serde_json::to_value(&req).unwrap_or_else(|_| json!({}));
-    if let Err(e) = st
-        .db
-        .insert_queued(&id, &channel, &source, &title, &preview, &payload)
-        .await
-    {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    let job = NotifyJob {
-        request_id: id.clone(),
-        channel: channel.clone(),
-        title,
-        message: req.message,
-        url: req.url,
-        group,
-    };
-    if st.notify_tx.try_send(job).is_err() {
-        let _ = st.db.fail_queued(&id, "notify queue full").await;
-        return (StatusCode::TOO_MANY_REQUESTS, "notify queue full").into_response();
-    }
-    st.notify_queue.fetch_add(1, Ordering::SeqCst);
-    (
-        StatusCode::ACCEPTED,
-        Json(json!({"request_id": id, "status": "queued", "capability": channel})),
+    match enqueue_notify(
+        &st,
+        NotifyEnqueue {
+            channel: &channel,
+            title: req.title.as_deref(),
+            message: &req.message,
+            url: req.url.as_deref(),
+            group: group.as_deref(),
+            source: &source,
+            payload,
+            dry_run: None,
+        },
     )
-        .into_response()
+    .await
+    {
+        Ok(id) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"request_id": id, "status": "queued", "capability": channel})),
+        )
+            .into_response(),
+        Err((code, message)) => (code, message).into_response(),
+    }
 }
 
 async fn lock_handler(
@@ -466,19 +660,20 @@ async fn lock_handler(
 }
 
 fn auth(st: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
-    let Some(expected) = st.token.as_deref() else {
+    let token = st.api.read().unwrap_or_else(|e| e.into_inner()).clone();
+    let Some(expected) = token.label() else {
         return Ok(());
     };
     let direct = ["x-gofer-token", "x-agent-token"]
         .iter()
         .filter_map(|name| headers.get(*name))
         .filter_map(|v| v.to_str().ok())
-        .any(|v| v == expected);
+        .fold(false, |acc, v| acc | auth::token_matches(expected, v));
     let bearer = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|v| v == expected);
+        .is_some_and(|v| auth::token_matches(expected, v));
     if direct || bearer {
         Ok(())
     } else {
@@ -518,7 +713,7 @@ fn request_source(headers: &HeaderMap, body: Option<&str>) -> String {
         .unwrap_or_else(|| "api".into())
 }
 
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     format!("g_{}", &uuid::Uuid::new_v4().to_string()[..8])
 }
 
@@ -538,7 +733,7 @@ async fn notify_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<NotifyJob>) {
         st.notify_queue.fetch_sub(1, Ordering::SeqCst);
         let _ = st.db.mark_running(&job.request_id).await;
         let started = Instant::now();
-        let dry = st.dry_run;
+        let dry = job.dry_run;
         let job2 = job.clone();
         let result = tokio::task::spawn_blocking(move || execute_notify(&job2, dry))
             .await
@@ -553,7 +748,7 @@ async fn notify_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<NotifyJob>) {
                         true,
                         duration,
                         &summary,
-                        Some(&json!({"kind": "notify", "dry_run": st.dry_run})),
+                        Some(&json!({"kind": "notify", "dry_run": dry})),
                         None,
                     )
                     .await;
@@ -604,6 +799,8 @@ async fn lock_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<LockJob>) {
     while let Some(job) = rx.recv().await {
         st.lock_queue.fetch_sub(1, Ordering::SeqCst);
         let _ = st.db.mark_running(&job.request_id).await;
+        // Demo and real locking share ~/.maoyan-booker-profile; serialize them.
+        let browser_guard = st.browser_lock.lock().await;
         let started = Instant::now();
         let args = LockArgs {
             cinema_id: job.cinema_id.clone(),
@@ -620,6 +817,7 @@ async fn lock_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<LockJob>) {
             Ok(run) => run.complete().await,
             Err(e) => {
                 let duration = started.elapsed().as_millis() as i64;
+                let details = e.to_string();
                 let _ = st
                     .db
                     .finish(
@@ -628,9 +826,22 @@ async fn lock_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<LockJob>) {
                         duration,
                         "锁票失败",
                         None,
-                        Some(&e.to_string()),
+                        Some(&details),
                     )
                     .await;
+                let st_discord = st.clone();
+                let job_discord = job.clone();
+                let elapsed = started.elapsed().as_secs_f64();
+                tokio::spawn(async move {
+                    notify_lock_discord(
+                        &st_discord,
+                        &job_discord,
+                        "Error",
+                        &format!("锁票失败: {details}"),
+                        elapsed,
+                    )
+                    .await;
+                });
                 continue;
             }
         };
@@ -656,7 +867,45 @@ async fn lock_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<LockJob>) {
                 if ok { None } else { Some(&summary) },
             )
             .await;
+        drop(browser_guard);
+        {
+            let st_discord = st.clone();
+            let job_discord = job.clone();
+            let summary_discord = summary.clone();
+            let elapsed = outcome.elapsed.as_secs_f64();
+            tokio::spawn(async move {
+                notify_lock_discord(&st_discord, &job_discord, code, &summary_discord, elapsed)
+                    .await;
+            });
+        }
         post_lock_callback(&st, &job, code, &summary, outcome.elapsed.as_secs_f64()).await;
+    }
+}
+
+async fn notify_lock_discord(
+    st: &Arc<AppState>,
+    job: &LockJob,
+    code: &str,
+    summary: &str,
+    elapsed_sec: f64,
+) {
+    let webhook = match st.db.get_setting(discord::WEBHOOK_KEY).await {
+        Ok(Some(url)) if !url.trim().is_empty() => url,
+        _ => return,
+    };
+    let notice = discord::LockNotice {
+        request_id: &job.request_id,
+        cinema_id: &job.cinema_id,
+        cinema_name: &job.cinema_name,
+        movie_id: job.movie_id,
+        movie_name: &job.movie_name,
+        show_date: &job.show_date,
+        code,
+        summary,
+        elapsed_sec,
+    };
+    if let Err(e) = discord::send_lock_result(&st.http, &webhook, &notice).await {
+        tracing::warn!("lock discord notification failed: {e}");
     }
 }
 
@@ -721,20 +970,65 @@ pub async fn run(cfg: ServerConfig) -> Result<()> {
     let db = Db::connect(&cfg.db)
         .await
         .with_context(|| format!("初始化 Gofer 数据库失败: {}", cfg.db))?;
+    crate::assets::materialize().context("写入内置运行资源失败")?;
     let paused = db.paused().await.unwrap_or(false);
-    let state = AppState::new(
-        db.clone(),
-        cfg.token,
-        cfg.dry_run,
-        cfg.lock_headless,
-        base_url_for_bind(&cfg.bind),
-        paused,
+
+    let auth_state = Arc::new(AuthState::load(&db, cfg.admin_password.as_deref()).await?);
+    if !auth_state.has_admin_password() && !auth::is_loopback_bind(&cfg.bind) {
+        bail!(
+            "面板尚未设置管理员密码。请先以 --bind 127.0.0.1:8790 启动并完成 /setup，\
+             或设置 GOFER_ADMIN_PASSWORD 后重启。"
+        );
+    }
+
+    let db_token = db.get_setting(auth::API_TOKEN_KEY).await?;
+    let api = auth::resolve_api_token(db_token.as_deref(), cfg.token.clone());
+    let token_source = api.source.label();
+    let token_updated_at = db.get_setting(auth::API_TOKEN_UPDATED_KEY).await?;
+    let demo_cfg = DemoConfig::new(
+        cfg.demo_city_id,
+        cfg.demo_cinema_id.clone(),
+        cfg.demo_movie_id.clone(),
+        cfg.demo_timeout_secs,
+        cfg.demo_python.clone(),
+        cfg.demo_cmd.clone(),
     );
+
+    let state = AppState::new(AppStateInit {
+        db: db.clone(),
+        api,
+        env_token: cfg.token.clone(),
+        token_updated_at,
+        auth: auth_state,
+        dry_run: cfg.dry_run,
+        lock_headless: cfg.lock_headless,
+        base_url: base_url_for_bind(&cfg.bind),
+        public_url: cfg.public_url.clone(),
+        cookie_secure: cfg.cookie_secure,
+        paused,
+        demo_cfg,
+    });
+
+    if let Ok(n) = state
+        .db
+        .fail_incomplete_capability("lock_demo", "服务重启，演示中断")
+        .await
+    {
+        if n > 0 {
+            tracing::warn!("marked {n} stale lock_demo request(s) as failed");
+        }
+    }
     tracing::info!(
-        "gofer listening on http://{}  db={}  token={}",
+        "gofer listening on http://{}  db={}  token={} ({})  admin={}",
         cfg.bind,
         cfg.db,
-        if state.token.is_some() { "on" } else { "off" }
+        if state.token_required() { "on" } else { "off" },
+        token_source,
+        if state.auth.has_admin_password() {
+            "configured"
+        } else {
+            "first-run setup"
+        }
     );
 
     let prune_db = db.clone();

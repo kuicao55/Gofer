@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Gofer · Settings{% endblock %}
+{% block content %}
+<section class="hero" style="padding-bottom:14px">
+  <div>
+    <p class="eyebrow">Settings</p>
+    <h1>Access.</h1>
+    <p class="lede">这里的 token 用于其他应用调用 Gofer。面板登录密码与 API token 相互独立。</p>
+  </div>
+  <div class="hero-meta">
+    <span class="badge {% if token_on %}ok{% else %}warn{% endif %}">
+      {% if token_on %}token 已启用{% else %}token 未设置{% endif %}
+    </span>
+    <span class="mono muted">v{{ version }}</span>
+  </div>
+</section>
+
+{% if rotated %}
+<div class="alert-strip" style="border-color:var(--ok)">
+  已生成新 token。旧 token 已立即失效，请把下面的新值发给调用方。
+</div>
+{% endif %}
+{% if reset %}
+<div class="alert-strip">已删除面板保存的 token，当前回退到启动时的 GOFER_TOKEN（如果有）。</div>
+{% endif %}
+{% if !error.is_empty() %}
+<div class="alert-strip">{{ error }}</div>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Credentials</p>
+      <h2>接入信息</h2>
+      <p>把地址和 token 一起发给调用方即可使用；旧 token 在轮转后立即返回 401。</p>
+    </div>
+  </div>
+
+  <div class="health-row"><span class="health-key">API 地址</span><span class="health-val mono">{{ panel_origin }}</span></div>
+  <div class="health-row"><span class="health-key">本机监听</span><span class="health-val mono">{{ base_url }}</span></div>
+  <div class="health-row"><span class="health-key">Token 来源</span><span class="health-val mono">{{ token_source }}</span></div>
+  <div class="health-row"><span class="health-key">上次轮转</span><span class="health-val mono">{{ token_updated_at }}</span></div>
+
+  <div style="margin-top:16px">
+    <p class="eyebrow">API token</p>
+    <div class="token-box">
+      {% if token_on %}
+      <code id="token-value">{{ token }}</code>
+      <button class="btn ghost small" type="button" id="token-value-copy" onclick="copyEl('token-value')">复制</button>
+      {% else %}
+      <span class="muted">尚未设置 token。点击下方“生成 token”创建。</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div style="margin-top:16px">
+    <p class="eyebrow">Copy ready</p>
+    <textarea id="access-info" class="input mono access-block" readonly rows="2">GOFER_URL={{ panel_origin }}
+GOFER_TOKEN={{ token }}</textarea>
+    <div class="copy-row" style="margin-top:8px">
+      <button class="btn ghost small" type="button" id="access-info-copy" onclick="copyEl('access-info')">复制地址和 token</button>
+      <span class="form-note">也可以直接手动选择上面的文本。</span>
+    </div>
+  </div>
+
+  <div class="form-actions" style="margin-top:18px">
+    <form method="post" action="/actions/token/rotate"
+          onsubmit="return confirm('生成新 token 后旧 token 会立即失效，所有调用方都需要更新。继续？')">
+      <button class="btn clay" type="submit">{% if token_on %}轮转 token{% else %}生成 token{% endif %}</button>
+    </form>
+    {% if env_token_present %}
+    <form method="post" action="/actions/token/reset-env"
+          onsubmit="return confirm('删除面板保存的 token，回退到启动时的 GOFER_TOKEN？')">
+      <button class="btn ghost" type="submit">回退到 GOFER_TOKEN</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <p class="form-note" style="margin-top:14px">
+    如果调用方在另一台机器，把 <span class="mono">127.0.0.1</span> 换成 Mac mini 的局域网 / Tailscale 地址，
+    或用 SSH 隧道。默认只监听 <span class="mono">127.0.0.1</span>；不要直接把面板暴露到公网。
+  </p>
+  <p class="form-note" style="margin-top:6px">
+    Token 明文保存在本地 SQLite（文件权限 0600）；备份数据库时请按敏感数据保护。
+  </p>
+</section>
+
+<section class="card" style="margin-top:12px">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Admin</p>
+      <h2>管理员登录</h2>
+      <p>面板密码只用于这里，不会作为 API token 使用。</p>
+    </div>
+  </div>
+  {% if env_password_managed %}
+  <div class="alert-strip">当前管理员密码由 <span class="mono">GOFER_ADMIN_PASSWORD</span> 管理；修改环境变量并重启即可重置。新密码会写回数据库。</div>
+  {% else %}
+  <p class="form-note">如需重置密码：在启动环境里设置 <span class="mono">GOFER_ADMIN_PASSWORD</span> 后重启，再移除该变量即可。</p>
+  {% endif %}
+</section>
+
+<script>
+function copyEl(id) {
+  const el = document.getElementById(id);
+  const text = ("value" in el) ? el.value : el.textContent;
+  const button = document.getElementById(id + "-copy");
+  const done = () => {
+    if (!button) return;
+    const old = button.textContent;
+    button.textContent = "已复制";
+    setTimeout(() => { button.textContent = old; }, 1500);
+  };
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); done(); }
+    catch (e) { alert("复制失败，请手动选择文本"); }
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+</script>
+{% endblock %}

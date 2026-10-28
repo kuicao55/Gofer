@@ -2,12 +2,17 @@
 # Start/stop Gofer. Usage: ./start-gofer.sh [start|stop|restart|status|logs] [--build]
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="${GOFER_BIN:-$ROOT/target/release/gofer}"
+if [ -n "${GOFER_BIN:-}" ]; then
+  BIN="$GOFER_BIN"
+elif [ -x "$ROOT/gofer" ]; then
+  BIN="$ROOT/gofer"
+else
+  BIN="$ROOT/target/release/gofer"
+fi
 PID_FILE="${GOFER_PID_FILE:-$HOME/.local/state/gofer/gofer.pid}"
 LOG_FILE="${GOFER_LOG_FILE:-$HOME/.local/state/gofer/gofer.log}"
 BIND="${GOFER_BIND:-127.0.0.1:8790}"
 DB="${GOFER_DB:-$HOME/.local/state/gofer/gofer.db}"
-SCRIPTS="${GOFER_SCRIPTS_DIR:-$ROOT/scripts}"
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")" "$(dirname "$DB")"
 cmd="${1:-start}"; shift || true
 build=0; for a in "$@"; do [ "$a" = "--build" ] && build=1; done
@@ -21,9 +26,15 @@ case "$cmd" in
   start)
     if alive "$pid"; then echo "gofer already running pid=$pid"; exit 0; fi
     echo "==> starting gofer on $BIND"
-    nohup env GOFER_DB="$DB" GOFER_SCRIPTS_DIR="$SCRIPTS" \
-      GOFER_PID_FILE="$PID_FILE" GOFER_LOG_FILE="$LOG_FILE" \
-      "$BIN" serve --bind "$BIND" >>"$LOG_FILE" 2>&1 &
+    ENV_ARGS=(GOFER_DB="$DB" GOFER_PID_FILE="$PID_FILE" GOFER_LOG_FILE="$LOG_FILE")
+    # Binaries embed scripts/web by default. Only pass explicit overrides.
+    if [ -n "${GOFER_SCRIPTS_DIR:-}" ]; then
+      ENV_ARGS+=(GOFER_SCRIPTS_DIR="$GOFER_SCRIPTS_DIR")
+    fi
+    if [ -n "${GOFER_WEB_DIR:-}" ]; then
+      ENV_ARGS+=(GOFER_WEB_DIR="$GOFER_WEB_DIR")
+    fi
+    nohup env "${ENV_ARGS[@]}" "$BIN" serve --bind "$BIND" >>"$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 0.6
     curl -fsS --max-time 2 "http://127.0.0.1:${BIND##*:}/health" >/dev/null && echo "✓ http://$BIND" || { echo "✗ failed"; tail -20 "$LOG_FILE"; exit 1; }

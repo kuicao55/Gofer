@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Gofer · 登录</title>
+  <link rel="icon" href="/static/favicon.svg?v={{ version }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ version }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark"></span><span>Gofer</span></a>
+      <div class="topbar-meta">
+        <span class="mono">v{{ version }}</span>
+        <span class="mono muted">{{ now }}</span>
+      </div>
+    </header>
+
+    <main class="auth-wrap">
+      <section class="card auth-card">
+        <p class="eyebrow">Admin</p>
+        <h1>登录面板</h1>
+        <p class="lede">管理员密码只用于面板，不是给其他应用使用的 API token。</p>
+
+        {% if !error.is_empty() %}
+        <div class="alert-strip">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" action="/login" class="form-grid" style="margin-top:18px">
+          <div class="form-field full">
+            <label for="password">管理员密码</label>
+            <input class="input" id="password" name="password" type="password"
+                   autocomplete="current-password" required autofocus>
+          </div>
+          <div class="form-actions full">
+            <button class="btn clay" type="submit">登录</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

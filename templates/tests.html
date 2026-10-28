@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Gofer · Tests{% endblock %}
+{% block content %}
+<section class="hero" style="padding-bottom:14px">
+  <div>
+    <p class="eyebrow">Manual tests</p>
+    <h1>Test the<br>channels.</h1>
+    <p class="lede">这些按钮会走真实的 notify worker。默认真实发送；勾选“仅模拟”可只演练不操作 GUI。</p>
+  </div>
+  <div class="hero-meta">
+    <span class="badge {% if paused %}warn{% else %}ok{% endif %}">
+      {% if paused %}已暂停{% else %}运行中{% endif %}
+    </span>
+    <span class="badge {% if dry_run %}warn{% else %}flat{% endif %}">
+      {% if dry_run %}全局 dry-run{% else %}真实执行{% endif %}
+    </span>
+    <a class="btn ghost small" href="/settings">Token</a>
+  </div>
+</section>
+
+{% if !error.is_empty() %}
+<div class="alert-strip">{{ error }}</div>
+{% endif %}
+{% if paused %}
+<div class="alert-strip">服务已暂停，测试发送会被拒绝。先在概览页恢复运行。</div>
+{% endif %}
+{% if dry_run %}
+<div class="alert-strip">
+  服务全局处于 dry-run。测试表单默认 <strong>真实发送</strong>（会覆盖全局 dry-run）；想只模拟，请勾选“仅模拟”。
+</div>
+{% endif %}
+
+<section class="grid-two">
+  <div class="card" id="wechat">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">WeChat</p>
+        <h2>微信测试</h2>
+        <p>发送到当前打开的微信会话。发送前请把微信停在目标群聊页面。</p>
+      </div>
+      <span class="badge flat">本机</span>
+    </div>
+    <form method="post" action="/actions/test/wechat"
+          onsubmit="return confirm('将真实发送到当前打开的微信会话（除非勾选仅模拟）。继续？')">
+      <div class="form-grid">
+        <div class="form-field full">
+          <label for="wechat-message">消息</label>
+          <textarea id="wechat-message" name="message" required
+                    placeholder="例如：Gofer 微信测试消息"></textarea>
+        </div>
+        <div class="form-field full">
+          <label class="checkbox-row">
+            <input type="checkbox" name="simulate" value="1">
+            仅模拟（不操作微信）
+          </label>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn clay" type="submit" {% if paused %}disabled{% endif %}>发送到当前会话</button>
+      </div>
+    </form>
+    <p class="form-note" style="margin-top:12px">
+      微信脚本不会按群名切换会话，只对当前打开的聊天操作。
+    </p>
+  </div>
+
+  <div class="card" id="xhs">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Xiaohongshu</p>
+        <h2>小红书测试</h2>
+        <p>发送到指定群聊。群名必须和聊天列表标题完全一致。</p>
+      </div>
+      <span class="badge flat">本机</span>
+    </div>
+    <form method="post" action="/actions/test/xhs"
+          onsubmit="return confirm('将真实发送到指定小红书群聊（除非勾选仅模拟）。继续？')">
+      <div class="form-grid">
+        <div class="form-field full">
+          <label for="xhs-group">群名</label>
+          <input class="input" id="xhs-group" name="group" required
+                 placeholder="与聊天列表标题完全一致">
+        </div>
+        <div class="form-field full">
+          <label for="xhs-title">标题</label>
+          <input class="input" id="xhs-title" name="title" placeholder="可选，默认“面板测试 · 小红书”">
+        </div>
+        <div class="form-field full">
+          <label for="xhs-message">正文</label>
+          <textarea id="xhs-message" name="message" required
+                    placeholder="例如：Gofer 小红书测试消息"></textarea>
+        </div>
+        <div class="form-field full">
+          <label for="xhs-url">链接</label>
+          <input class="input" id="xhs-url" name="url" placeholder="可选">
+        </div>
+        <div class="form-field full">
+          <label class="checkbox-row">
+            <input type="checkbox" name="simulate" value="1">
+            仅模拟（不操作浏览器）
+          </label>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn clay" type="submit" {% if paused %}disabled{% endif %}>发送到指定群</button>
+      </div>
+    </form>
+    <p class="form-note" style="margin-top:12px">
+      需要 <span class="mono">agent-browser</span> 和已登录的
+      <span class="mono">~/.agent-browser/profiles/xiaohongshu</span>。
+    </p>
+  </div>
+</section>
+
+{% if !focus_id.is_empty() %}
+<section class="card" style="margin-top:12px">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Result</p>
+      <h2>本次测试结果</h2>
+      <p>请求是异步执行的；状态会自动刷新到终态。</p>
+    </div>
+  </div>
+  <div id="test-status"
+       hx-get="/tests/status?id={{ focus_id }}"
+       hx-trigger="load, every 2s"
+       hx-swap="outerHTML">
+    查询中…
+  </div>
+</section>
+{% endif %}
+
+<section class="card" style="margin-top:12px">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">History</p>
+      <h2>最近面板测试</h2>
+      <p>只显示从面板发起的微信/小红书测试，最多 20 条。</p>
+    </div>
+    <a class="btn ghost small" href="/requests">全部请求</a>
+  </div>
+  {% if recent.is_empty() %}
+  <div class="empty">还没有面板测试。</div>
+  {% else %}
+  <div class="req-list">
+    <div class="req-head">
+      <span>时间</span>
+      <span>能力</span>
+      <span>状态</span>
+      <span class="req-dur">耗时</span>
+      <span>来源</span>
+      <span>内容 / 结果</span>
+    </div>
+    {% for r in recent %}
+    <div class="req-row">
+      <div class="req-time">{{ r.time }}<div class="req-id">{{ r.id }}</div></div>
+      <div class="req-cap"><span class="cap-dot {{ r.capability_class }}"></span>{{ r.capability }}</div>
+      <div class="req-status"><span class="badge {{ r.status_class }}">{{ r.status_text }}</span></div>
+      <div class="req-dur">{{ r.duration }}</div>
+      <div class="req-source">{{ r.source }}</div>
+      <div class="req-content">
+        <div class="req-title">{{ r.title }}</div>
+        {% if !r.preview.is_empty() %}<div class="req-preview">{{ r.preview }}</div>{% endif %}
+        {% if r.show_summary %}<div class="req-ok">{{ r.summary }}</div>{% endif %}
+        {% if !r.error.is_empty() %}<div class="req-error">{{ r.error }}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

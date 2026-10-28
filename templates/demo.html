@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Gofer · Demo{% endblock %}
+{% block content %}
+<section class="hero" style="padding-bottom:14px">
+  <div>
+    <p class="eyebrow">Seat demo</p>
+    <h1>Show the<br>seats.</h1>
+    <p class="lede">
+      随机打开一个影院，自动选择一个电影/场次，走到选座页并停下。
+      只展示，不提交订单。
+    </p>
+  </div>
+  <div class="hero-meta">
+    <span class="badge {% if running %}warn{% else %}flat{% endif %}">
+      {% if running %}演示中{% else %}空闲{% endif %}
+    </span>
+    <span class="badge {% if demo_ready %}ok{% else %}bad{% endif %}">
+      {% if demo_ready %}依赖就绪{% else %}依赖缺失{% endif %}
+    </span>
+    <a class="btn ghost small" href="/settings">Token</a>
+  </div>
+</section>
+
+<div class="alert-strip">
+  <strong>安全约束：</strong>演示脚本只选座并停在确认前，不点击确认、不提交订单。
+  浏览器会保持打开，直到你点击“停止演示”或超时。
+</div>
+
+{% if !error.is_empty() %}
+<div class="alert-strip">{{ error }}</div>
+{% endif %}
+{% if !demo_ready %}
+<div class="alert-strip">
+  演示依赖未就绪。需要脚本 <span class="mono">{{ script_path }}</span>，以及
+  <span class="mono">maoyan-booker/.venv/bin/python</span> 或 <span class="mono">uv</span>。
+  检查 <a href="/">Overview</a> 的能力预检。
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Start</p>
+      <h2>开始演示</h2>
+      <p>城市 ID 默认 10（上海）。留空影院 ID 时从该城市随机抽取；也可以指定影院/电影复现。</p>
+    </div>
+  </div>
+  <form method="post" action="/actions/demo/start"
+        onsubmit="return confirm('将打开有头浏览器展示选座流程，不会提交订单。继续？')">
+    <div class="form-grid">
+      <div class="form-field">
+        <label for="demo-city">城市 ID</label>
+        <input class="input" id="demo-city" name="city_id" type="number" min="1"
+               value="{{ city_id }}" placeholder="10">
+      </div>
+      <div class="form-field">
+        <label for="demo-cinema">影院 ID（可选）</label>
+        <input class="input" id="demo-cinema" name="cinema_id"
+               value="{{ cinema_id }}" placeholder="留空 = 随机">
+      </div>
+      <div class="form-field">
+        <label for="demo-movie">电影 ID（可选）</label>
+        <input class="input" id="demo-movie" name="movie_id"
+               value="{{ movie_id }}" placeholder="留空 = 自动选场次">
+      </div>
+      <div class="form-field">
+        <label for="demo-seats">票数</label>
+        <input class="input" id="demo-seats" name="num_seats" type="number" min="1" max="6"
+               value="{{ num_seats }}">
+      </div>
+      <div class="form-field full">
+        <label class="checkbox-row">
+          <input type="checkbox" name="imax_only" value="1" {% if imax_only %}checked{% endif %}>
+          只看 IMAX 场次
+        </label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn clay" type="submit" {% if running || !demo_ready %}disabled{% endif %}>
+        开始演示（不提交订单）
+      </button>
+      {% if running %}
+      <span class="form-note">已有演示在进行；先停止再开始新的。</span>
+      {% endif %}
+    </div>
+  </form>
+  <p class="form-note" style="margin-top:12px">
+    截图目录：<span class="mono">{{ screenshot_dir }}</span>
+  </p>
+</section>
+
+<section class="grid-two" style="margin-top:12px">
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Status</p>
+        <h2>演示状态</h2>
+        <p>浏览器在 Mac mini 上打开；面板会显示阶段和最新截图。</p>
+      </div>
+    </div>
+    <div id="demo-status" hx-get="/demo/status" hx-trigger="load, every 2s" hx-swap="outerHTML">
+      加载中…
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Log</p>
+        <h2>实时日志</h2>
+        <p>脚本 stdout/stderr 的最新 500 行。</p>
+      </div>
+    </div>
+    <div id="demo-logs" hx-get="/demo/logs" hx-trigger="load, every 2s" hx-swap="outerHTML">
+      加载中…
+    </div>
+  </div>
+</section>
+
+<section class="card" style="margin-top:12px">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">History</p>
+      <h2>最近演示</h2>
+      <p>演示记录会写入请求历史，结果标记为“未提交订单”。</p>
+    </div>
+    <a class="btn ghost small" href="/requests">全部请求</a>
+  </div>
+  {% if recent.is_empty() %}
+  <div class="empty">还没有演示记录。</div>
+  {% else %}
+  <div class="req-list">
+    <div class="req-head">
+      <span>时间</span>
+      <span>能力</span>
+      <span>状态</span>
+      <span class="req-dur">耗时</span>
+      <span>来源</span>
+      <span>内容 / 结果</span>
+    </div>
+    {% for r in recent %}
+    <div class="req-row">
+      <div class="req-time">{{ r.time }}<div class="req-id">{{ r.id }}</div></div>
+      <div class="req-cap"><span class="cap-dot {{ r.capability_class }}"></span>{{ r.capability }}</div>
+      <div class="req-status"><span class="badge {{ r.status_class }}">{{ r.status_text }}</span></div>
+      <div class="req-dur">{{ r.duration }}</div>
+      <div class="req-source">{{ r.source }}</div>
+      <div class="req-content">
+        <div class="req-title">{{ r.title }}</div>
+        {% if !r.preview.is_empty() %}<div class="req-preview">{{ r.preview }}</div>{% endif %}
+        {% if r.show_summary %}<div class="req-ok">{{ r.summary }}</div>{% endif %}
+        {% if !r.error.is_empty() %}<div class="req-error">{{ r.error }}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

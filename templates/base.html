@@ -16,10 +16,14 @@
         <a href="/" class="{% if page == "overview" %}active{% endif %}">Overview</a>
         <a href="/requests" class="{% if page == "requests" %}active{% endif %}">Requests</a>
         <a href="/update" class="{% if page == "update" %}active{% endif %}">Update</a>
+        <a href="/settings" class="{% if page == "settings" %}active{% endif %}">Settings</a>
       </nav>
       <div class="topbar-meta">
         <span class="mono">v{{ version }}</span>
         <span class="mono muted">{{ now }}</span>
+        <form method="post" action="/logout" class="logout-form">
+          <button class="btn ghost small" type="submit">退出</button>
+        </form>
       </div>
     </header>
     {% block content %}{% endblock %}

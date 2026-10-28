@@ -9,9 +9,14 @@
 //! per-capability success counts. The service deliberately does not call back
 //! into the caller; callers can poll `/v1/requests/:id`.
 
+pub mod assets;
+pub mod auth;
 pub mod capabilities;
 pub mod db;
+pub mod demo;
+pub mod discord;
 pub mod lock;
+pub mod maoyan;
 pub mod notify;
 pub mod server;
 pub mod update;

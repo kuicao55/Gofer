@@ -76,8 +76,45 @@ impl Db {
             .with_context(|| format!("连接数据库失败: {}", path.display()))?;
         let db = Self { pool };
         db.migrate().await?;
+        db.restrict_db_permissions(path);
         Ok(db)
     }
+
+    /// The settings table may contain the API token and admin password hash, so
+    /// keep the database (and its WAL sidecars) readable only by the current user.
+    #[cfg(unix)]
+    fn restrict_db_permissions(&self, path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut targets = vec![path.to_path_buf()];
+        targets.push(std::path::PathBuf::from(format!("{}-wal", path.display())));
+        targets.push(std::path::PathBuf::from(format!("{}-shm", path.display())));
+        targets.push(std::path::PathBuf::from(format!(
+            "{}-journal",
+            path.display()
+        )));
+
+        for target in targets {
+            if !target.exists() {
+                continue;
+            }
+            if let Err(e) =
+                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
+            {
+                tracing::warn!("chmod 0600 {} failed: {e}", target.display());
+            }
+        }
+
+        if let Some(parent) = path.parent() {
+            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            {
+                tracing::warn!("chmod 0700 {} failed: {e}", parent.display());
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn restrict_db_permissions(&self, _path: &Path) {}
 
     pub async fn connect_memory() -> Result<Self> {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")?
@@ -256,12 +293,74 @@ impl Db {
             .await?)
     }
 
+    // ------------------------- settings -------------------------
+
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
+    }
+
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO settings(key, value, updated_at)
+             VALUES (?, ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                           updated_at = datetime('now')",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Insert only if the key is absent. Returns true when this call created it.
+    /// Used to make first-run admin setup safe under concurrent requests.
+    pub async fn set_setting_if_absent(&self, key: &str, value: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "INSERT INTO settings(key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO NOTHING",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn delete_setting(&self, key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM settings WHERE key = ?")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn prune(&self, days: u32) -> Result<u64> {
         let modifier = format!("-{} days", days.max(1));
         let r = sqlx::query("DELETE FROM requests WHERE received_at < datetime('now', ?)")
             .bind(modifier)
             .execute(&self.pool)
             .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Mark requests of a capability that were left queued/running by a restart.
+    pub async fn fail_incomplete_capability(&self, capability: &str, error: &str) -> Result<u64> {
+        let r = sqlx::query(
+            "UPDATE requests SET status = 'failed', finished_at = datetime('now'),
+                summary = ?, error = ?
+             WHERE capability = ? AND status IN ('queued', 'running')",
+        )
+        .bind(error)
+        .bind(error)
+        .bind(capability)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected())
     }
 }
@@ -331,5 +430,67 @@ mod tests {
         let row = db.get("g_2").await.unwrap().unwrap();
         assert_eq!(row.status, "failed");
         assert_eq!(row.error.as_deref(), Some("booker 不存在"));
+    }
+
+    #[tokio::test]
+    async fn settings_roundtrip_and_absent_vs_empty() {
+        let db = Db::connect_memory().await.unwrap();
+        assert_eq!(db.get_setting("api.token").await.unwrap(), None);
+
+        db.set_setting("api.token", "").await.unwrap();
+        assert_eq!(
+            db.get_setting("api.token").await.unwrap(),
+            Some(String::new())
+        );
+
+        db.set_setting("api.token", "first").await.unwrap();
+        assert_eq!(
+            db.get_setting("api.token").await.unwrap().as_deref(),
+            Some("first")
+        );
+        db.set_setting("api.token", "second").await.unwrap();
+        assert_eq!(
+            db.get_setting("api.token").await.unwrap().as_deref(),
+            Some("second")
+        );
+
+        db.delete_setting("api.token").await.unwrap();
+        assert_eq!(db.get_setting("api.token").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn set_setting_if_absent_only_wins_once() {
+        let db = Db::connect_memory().await.unwrap();
+        assert!(db
+            .set_setting_if_absent("admin.password_hash", "one")
+            .await
+            .unwrap());
+        assert!(!db
+            .set_setting_if_absent("admin.password_hash", "two")
+            .await
+            .unwrap());
+        assert_eq!(
+            db.get_setting("admin.password_hash")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("one")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_db_permissions_are_restricted() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gofer.db");
+        let db = Db::connect(&path).await.unwrap();
+        db.set_setting("session.secret", "abc").await.unwrap();
+
+        let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o600);
+        let dir_mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
     }
 }

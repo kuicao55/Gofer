@@ -54,7 +54,7 @@
 
   {% if info.newer %}
   <form method="post" action="/actions/update/install" style="margin-top:18px"
-        onsubmit="return confirm('将下载并替换当前 tt-server，随后服务会重启。继续？')">
+        onsubmit="return confirm('将下载并替换当前 Gofer，随后服务会重启。继续？')">
     <button class="btn clay" type="submit">安装 {{ info.tag }} 并重启</button>
   </form>
   {% else %}

@@ -1,33 +1,52 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use gofer::auth::AuthState;
 use gofer::db::Db;
-use gofer::server::{self, AppState};
+use gofer::demo::DemoConfig;
+use gofer::server::{self, AppState, AppStateInit};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 async fn state_with_paused(token: Option<&str>, dry_run: bool, paused: bool) -> Arc<AppState> {
     let db = Db::connect_memory().await.unwrap();
-    AppState::new(
+    let env_token = token.map(String::from);
+    let api = gofer::auth::resolve_api_token(None, env_token.clone());
+    let auth = Arc::new(AuthState::new(
+        Some("$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$Zm9v".into()),
+        vec![7u8; 32],
+        false,
+    ));
+    AppState::new(AppStateInit {
         db,
-        token.map(String::from),
+        api,
+        env_token,
+        token_updated_at: None,
+        auth,
         dry_run,
-        true,
-        "http://127.0.0.1:8790",
+        lock_headless: true,
+        base_url: "http://127.0.0.1:8790".into(),
+        public_url: None,
+        cookie_secure: false,
         paused,
-    )
+        demo_cfg: DemoConfig::for_test(
+            PathBuf::from("/tmp/gofer-test-shots"),
+            PathBuf::from("/bin/true"),
+        ),
+    })
 }
 
 async fn state(token: Option<&str>, dry_run: bool) -> Arc<AppState> {
-    let db = Db::connect_memory().await.unwrap();
-    AppState::new(
-        db,
-        token.map(String::from),
-        dry_run,
-        true,
-        "http://127.0.0.1:8790",
-        false,
+    state_with_paused(token, dry_run, false).await
+}
+
+fn session_cookie(st: &AppState) -> String {
+    format!(
+        "{}={}",
+        gofer::auth::SESSION_COOKIE,
+        st.auth.issue_session()
     )
 }
 
@@ -75,7 +94,13 @@ async fn notify_dry_run_is_recorded_and_visible_in_panel() {
     assert!(row.summary.contains("dry-run"));
 
     let resp = app
-        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header("cookie", session_cookie(&st))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -200,6 +225,7 @@ async fn service_switch_pauses_and_resumes() {
             Request::builder()
                 .method("POST")
                 .uri("/actions/service/toggle")
+                .header("cookie", session_cookie(&st))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -243,6 +269,7 @@ async fn service_switch_pauses_and_resumes() {
             Request::builder()
                 .method("POST")
                 .uri("/actions/service/toggle")
+                .header("cookie", session_cookie(&st))
                 .body(Body::empty())
                 .unwrap(),
         )

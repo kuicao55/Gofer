@@ -1,0 +1,8 @@
+<div id="demo-logs" hx-get="/demo/logs" hx-trigger="every 2s" hx-swap="outerHTML">
+  {% if logs.is_empty() %}
+  <div class="empty">等待日志…</div>
+  {% else %}
+  <pre class="log-view">{% for line in logs %}{{ line }}
+{% endfor %}</pre>
+  {% endif %}
+</div>

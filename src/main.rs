@@ -36,6 +36,30 @@ enum Command {
         lock_headless: bool,
         #[arg(long, env = "GOFER_RETENTION_DAYS", default_value_t = 30)]
         retention_days: u32,
+        /// Optional public/base URL shown in the panel's copyable access block.
+        #[arg(long, env = "GOFER_PUBLIC_URL")]
+        public_url: Option<String>,
+        /// Mark the admin session cookie Secure when TLS terminates in front of Gofer.
+        #[arg(long, env = "GOFER_COOKIE_SECURE", default_value_t = false)]
+        cookie_secure: bool,
+        /// Maoyan city ID used to pick a random cinema for the demo.
+        #[arg(long, env = "GOFER_DEMO_CITY_ID", default_value_t = 10)]
+        demo_city_id: u32,
+        /// Optional fixed cinema ID for the demo (skips the random city API).
+        #[arg(long, env = "GOFER_DEMO_CINEMA_ID")]
+        demo_cinema_id: Option<String>,
+        /// Optional fixed movie ID for the demo.
+        #[arg(long, env = "GOFER_DEMO_MOVIE_ID")]
+        demo_movie_id: Option<String>,
+        /// Demo timeout in seconds.
+        #[arg(long, env = "GOFER_DEMO_TIMEOUT_SECS", default_value_t = 600)]
+        demo_timeout_secs: u64,
+        /// Optional Python interpreter for the vendored demo script.
+        #[arg(long, env = "GOFER_DEMO_PYTHON")]
+        demo_python: Option<String>,
+        /// Test-only command override for the demo worker.
+        #[arg(long, env = "GOFER_DEMO_CMD", hide = true)]
+        demo_cmd: Option<String>,
     },
 
     /// Send a WeChat or Xiaohongshu notification.
@@ -139,6 +163,14 @@ async fn main() -> Result<()> {
             dry_run,
             lock_headless,
             retention_days,
+            public_url,
+            cookie_secure,
+            demo_city_id,
+            demo_cinema_id,
+            demo_movie_id,
+            demo_timeout_secs,
+            demo_python,
+            demo_cmd,
         } => {
             init_tracing();
             let db = if db.trim().is_empty() {
@@ -146,13 +178,25 @@ async fn main() -> Result<()> {
             } else {
                 db
             };
+            let admin_password = std::env::var("GOFER_ADMIN_PASSWORD")
+                .ok()
+                .filter(|v| !v.trim().is_empty());
             server::run(ServerConfig {
                 bind,
                 db,
                 token,
+                admin_password,
+                public_url,
+                cookie_secure,
                 dry_run,
                 lock_headless,
                 retention_days,
+                demo_city_id,
+                demo_cinema_id,
+                demo_movie_id,
+                demo_timeout_secs,
+                demo_python,
+                demo_cmd,
             })
             .await
         }
@@ -274,7 +318,7 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&v)?);
             } else {
                 println!(
-                    "gofer {} · ok={} · token_required={} · queue notify={} lock={}",
+                    "gofer {} · ok={} · token_required={} · queue notify={} lock={} demo={}",
                     s(&v, "version"),
                     v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false),
                     v.get("token_required")
@@ -286,13 +330,17 @@ async fn main() -> Result<()> {
                     v.pointer("/queue/lock")
                         .and_then(|x| x.as_u64())
                         .unwrap_or(0),
+                    v.pointer("/queue/demo")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0),
                 );
                 if let Some(r) = v.get("ready") {
                     println!(
-                        "ready: wechat={} xhs={} lock={}",
+                        "ready: wechat={} xhs={} lock={} demo={}",
                         r.get("wechat").and_then(|x| x.as_bool()).unwrap_or(false),
                         r.get("xhs").and_then(|x| x.as_bool()).unwrap_or(false),
-                        r.get("lock").and_then(|x| x.as_bool()).unwrap_or(false)
+                        r.get("lock").and_then(|x| x.as_bool()).unwrap_or(false),
+                        r.get("demo").and_then(|x| x.as_bool()).unwrap_or(false)
                     );
                 }
             }

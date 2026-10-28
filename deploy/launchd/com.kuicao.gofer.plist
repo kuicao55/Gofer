@@ -7,23 +7,37 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/kuicao/Applications/Gofer/target/release/gofer</string>
+    <string>/Users/kuicao/Applications/Gofer/gofer</string>
     <string>serve</string>
     <string>--bind</string>
     <string>127.0.0.1:8790</string>
   </array>
 
+  <key>WorkingDirectory</key>
+  <string>/Users/kuicao/Applications/Gofer</string>
+
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/Users/kuicao/.local/bin:/usr/local/opt/node/bin:/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GOFER_DB</key>
     <string>/Users/kuicao/.local/state/gofer/gofer.db</string>
-    <key>GOFER_SCRIPTS_DIR</key>
-    <string>/Users/kuicao/Applications/Gofer/scripts</string>
-    <!-- 留空 = 不校验 token；设置后所有 /v1 请求需带 X-Gofer-Token -->
+    <!-- Release binaries embed scripts/ and web/. Do not set GOFER_SCRIPTS_DIR
+         or GOFER_WEB_DIR here unless you intentionally override them. -->
+    <!-- 留空 = 不校验 token；设置后所有 /v1 请求需带 X-Gofer-Token。
+         面板里轮转 token 后，数据库值优先于这里；可在 Settings 回退。 -->
     <key>GOFER_TOKEN</key>
     <string></string>
+    <!-- 可选：面板管理员密码重置。留空 = 使用面板内 /setup 设置的密码。
+         设置后重启会写回数据库并轮换会话；之后可移除。 -->
+    <key>GOFER_ADMIN_PASSWORD</key>
+    <string></string>
+    <!-- 可选：面板里展示的对外地址（例如 Tailscale 地址）。 -->
+    <key>GOFER_PUBLIC_URL</key>
+    <string></string>
+    <!-- 反向代理终止 TLS 时设为 true，给会话 cookie 加 Secure。 -->
+    <key>GOFER_COOKIE_SECURE</key>
+    <string>false</string>
     <!-- 只影响微信/小红书通知；锁票始终真锁 -->
     <key>GOFER_DRY_RUN</key>
     <string>false</string>
@@ -39,6 +53,18 @@
     <string></string>
     <key>MAOYAN_BOOKER_DIR</key>
     <string>/Users/kuicao/Applications/maoyan-booker</string>
+    <!-- 锁票演示：随机影院所在城市（10=上海）和超时时间。 -->
+    <key>GOFER_DEMO_CITY_ID</key>
+    <string>10</string>
+    <key>GOFER_DEMO_CINEMA_ID</key>
+    <string></string>
+    <key>GOFER_DEMO_MOVIE_ID</key>
+    <string></string>
+    <key>GOFER_DEMO_TIMEOUT_SECS</key>
+    <string>600</string>
+    <!-- 可选：指定演示脚本使用的 Python（默认 maoyan-booker/.venv 或 uv）。 -->
+    <key>GOFER_DEMO_PYTHON</key>
+    <string></string>
     <!-- 可选：小红书 session 过期时把二维码发到 Discord -->
     <key>XHS_WEBHOOK</key>
     <string></string>

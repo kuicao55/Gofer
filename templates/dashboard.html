@@ -103,13 +103,25 @@
           {% for c in cap.checks %}
           <div class="health-row">
             <span class="health-key"><span class="status-dot {% if c.ok %}ok{% else %}bad{% endif %}"></span>{{ c.label }}</span>
-            <span class="health-val mono">{{ c.detail }}</span>
+            <span class="health-val mono">{{ c.detail }}{% if !c.action.is_empty() %}
+              <a class="check-action" href="#"
+                 onclick="event.preventDefault(); document.getElementById('lock-notify-dialog').showModal()">{{ c.action }}</a>
+            {% endif %}</span>
           </div>
           {% endfor %}
         </div>
         {% if !cap.last_error.is_empty() %}
         <div class="alert-strip">{{ cap.last_error }}</div>
         {% endif %}
+        <div class="cap-actions">
+          {% if cap.id == "wechat" %}
+          <a class="btn ghost small" href="/tests#wechat">测试微信</a>
+          {% else if cap.id == "xhs" %}
+          <a class="btn ghost small" href="/tests#xhs">测试小红书</a>
+          {% else if cap.id == "lock" %}
+          <a class="btn ghost small" href="/demo">锁票演示</a>
+          {% endif %}
+        </div>
       </div>
       {% endfor %}
     </div>
@@ -165,10 +177,14 @@
       </div>
       <div class="health-row"><span class="health-key">Base URL</span><span class="health-val mono">{{ base_url }}</span></div>
       <div class="health-row"><span class="health-key">Auth</span><span class="health-val mono">{% if token_on %}X-Gofer-Token / Bearer{% else %}—{% endif %}</span></div>
+      <div class="health-row"><span class="health-key">Token</span><span class="health-val mono">{{ token_source }}</span></div>
       <div class="health-row"><span class="health-key">通知</span><span class="health-val mono">POST /v1/notify</span></div>
       <div class="health-row"><span class="health-key">锁票</span><span class="health-val mono">POST /v1/lock</span></div>
       <div class="health-row"><span class="health-key">查询</span><span class="health-val mono">GET /v1/requests/:id</span></div>
       <p class="form-note" style="margin-top:12px">请求是异步的：返回 202 + request_id，结果通过请求状态查询或面板查看。{% if paused %} 当前服务已暂停，新的通知/锁票请求会返回 503。{% endif %}</p>
+      <div class="form-actions" style="margin-top:14px">
+        <a class="btn ghost small" href="/settings">查看 / 轮转 token</a>
+      </div>
     </div>
 
     <div class="card">
@@ -184,4 +200,58 @@ gofer requests --limit 20</pre>
     </div>
   </section>
 </div>
+
+<dialog id="lock-notify-dialog" class="picker-dialog">
+  <div class="picker-head">
+    <div>
+      <p class="eyebrow">Auto lock</p>
+      <h2>Discord 通知</h2>
+      <p>真实锁票结束后，把结果 POST 到 Discord webhook。演示选座不会发送。</p>
+    </div>
+    <button class="btn ghost small" type="button"
+            onclick="document.getElementById('lock-notify-dialog').close()">关闭</button>
+  </div>
+
+  {% if !webhook_notice.is_empty() %}
+  <div class="alert-strip">{{ webhook_notice }}</div>
+  {% endif %}
+
+  <div class="health-row">
+    <span class="health-key">状态</span>
+    <span class="badge {% if lock_webhook_on %}ok{% else %}flat{% endif %}">
+      {% if lock_webhook_on %}已配置{% else %}未配置{% endif %}
+    </span>
+  </div>
+
+  <form method="post" action="/actions/lock/webhook" style="margin-top:12px">
+    <div class="form-field">
+      <label for="lock-webhook">Webhook URL</label>
+      <input class="input mono" id="lock-webhook" name="webhook" type="url"
+             value="{{ lock_webhook }}"
+             placeholder="https://discord.com/api/webhooks/...">
+    </div>
+    <div class="form-actions" style="margin-top:12px">
+      <button class="btn clay" type="submit">保存</button>
+      <button class="btn ghost" type="submit" name="clear" value="1"
+              onclick="return confirm('清除已保存的 Discord webhook？')">清除</button>
+    </div>
+  </form>
+
+  <form method="post" action="/actions/lock/webhook/test" style="margin-top:10px">
+    <button class="btn ghost" type="submit">发送测试通知</button>
+    <span class="form-note">先保存，再测试。</span>
+  </form>
+
+  <p class="form-note" style="margin-top:12px">
+    只允许 <span class="mono">https://discord.com</span> /
+    <span class="mono">discordapp.com</span> 的 <span class="mono">/api/webhooks/</span> 地址。
+    Webhook URL 含 token，按敏感数据保护。通知是 best-effort，结果仍以请求记录为准。
+  </p>
+</dialog>
+
+<script>
+{% if !webhook_notice.is_empty() %}
+document.getElementById('lock-notify-dialog').showModal();
+{% endif %}
+</script>
 {% endblock %}
