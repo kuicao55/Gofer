@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use askama::Template;
 use axum::body::Body;
@@ -17,6 +18,7 @@ use crate::db::{CapabilityStat, RequestRow};
 use crate::demo::DemoJob;
 use crate::discord;
 use crate::maoyan;
+use crate::notify::{self, XhsBrowserAction};
 use crate::server::{self, AppState};
 
 pub fn web_dir() -> String {
@@ -77,6 +79,20 @@ pub struct CapabilityView {
 }
 
 #[derive(Debug, Clone)]
+pub struct ToolView {
+    pub id: String,
+    pub label: String,
+    pub note: String,
+    pub status_text: String,
+    pub status_class: String,
+    pub running: bool,
+    pub rss: String,
+    pub processes: usize,
+    pub action_url: String,
+    pub action_label: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct RequestView {
     pub id: String,
     pub time: String,
@@ -112,6 +128,10 @@ struct DashboardTemplate {
     caps_ready: usize,
     caps_total: usize,
     capabilities: Vec<CapabilityView>,
+    tools: Vec<ToolView>,
+    tools_rss: String,
+    tools_running: usize,
+    tool_notice: String,
     requests: Vec<RequestView>,
 }
 
@@ -310,6 +330,7 @@ pub struct SettingsQuery {
 #[derive(Deserialize, Default)]
 pub struct DashboardQuery {
     webhook: Option<String>,
+    tool: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -335,9 +356,22 @@ pub async fn dashboard(
     Query(q): Query<DashboardQuery>,
 ) -> Response {
     let notice = webhook_notice(q.webhook.as_deref());
-    match build_dashboard(&st, notice).await {
+    let tool_notice = tool_notice(q.tool.as_deref());
+    match build_dashboard(&st, notice, tool_notice).await {
         Ok(t) => render(&t).into_response(),
         Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn tool_notice(code: Option<&str>) -> String {
+    match code {
+        Some("xhs_opened") => "小红书浏览器已打开并预热。".into(),
+        Some("xhs_closed") => "小红书浏览器已关闭，内存已释放。".into(),
+        Some("xhs_busy") => "正在发送小红书消息或操作浏览器，请稍后再试。".into(),
+        Some("xhs_failed") => "小红书浏览器操作失败，请查看 Gofer 日志。".into(),
+        Some("wechat_opened") => "已尝试打开微信。".into(),
+        Some("wechat_failed") => "打开微信失败，请确认已安装微信。".into(),
+        _ => String::new(),
     }
 }
 
@@ -924,6 +958,69 @@ pub async fn demo_page(State(st): State<Arc<AppState>>) -> Response {
     render_no_store(&t)
 }
 
+pub async fn action_tools_xhs_open(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    action_tools_xhs(st, headers, XhsBrowserAction::Open, "xhs_opened").await
+}
+
+pub async fn action_tools_xhs_close(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    action_tools_xhs(st, headers, XhsBrowserAction::Close, "xhs_closed").await
+}
+
+async fn action_tools_xhs(
+    st: Arc<AppState>,
+    headers: HeaderMap,
+    action: XhsBrowserAction,
+    ok_code: &str,
+) -> Response {
+    if !auth::same_origin_ok(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin request").into_response();
+    }
+    // Never close the browser under an in-flight XHS send.
+    let _guard = match st.xhs_browser_lock.clone().try_lock_owned() {
+        Ok(guard) => guard,
+        Err(_) => return Redirect::to("/?tool=xhs_busy#tools").into_response(),
+    };
+
+    match notify::xhs_browser_control(action).await {
+        Ok(value) => {
+            tracing::info!("xhs browser {} ok: {value}", action.as_str());
+            Redirect::to(&format!("/?tool={ok_code}#tools")).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("xhs browser {} failed: {e}", action.as_str());
+            Redirect::to("/?tool=xhs_failed#tools").into_response()
+        }
+    }
+}
+
+pub async fn action_tools_wechat_open(headers: HeaderMap) -> Response {
+    if !auth::same_origin_ok(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin request").into_response();
+    }
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::new("open")
+            .args(["-a", "WeChat"])
+            .status(),
+    )
+    .await;
+    match result {
+        Ok(Ok(status)) if status.success() => {
+            Redirect::to("/?tool=wechat_opened#tools").into_response()
+        }
+        other => {
+            tracing::warn!("open WeChat failed: {other:?}");
+            Redirect::to("/?tool=wechat_failed#tools").into_response()
+        }
+    }
+}
+
 pub async fn action_demo_start(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1179,6 +1276,7 @@ pub async fn action_update_install() -> Response {
 async fn build_dashboard(
     st: &Arc<AppState>,
     webhook_notice: String,
+    tool_notice: String,
 ) -> anyhow::Result<DashboardTemplate> {
     let stats = st.db.stats_24h().await.unwrap_or_default();
     let cap_stats = st.db.capability_stats().await.unwrap_or_default();
@@ -1285,6 +1383,21 @@ async fn build_dashboard(
         });
     }
 
+    let memory = tokio::task::spawn_blocking(crate::service::collect_memory)
+        .await
+        .unwrap_or_else(|e| {
+            crate::service::MemorySnapshot::unavailable(format!("内存采集任务失败: {e}"))
+        });
+    let tool_notice = if memory.available {
+        tool_notice
+    } else {
+        format!(
+            "进程采集失败: {}",
+            memory.error.as_deref().unwrap_or("未知错误")
+        )
+    };
+    let (tools, tools_rss, tools_running) = tool_views(&memory);
+
     let stats = StatsView {
         total: stats.total,
         ok: stats.ok,
@@ -1318,8 +1431,130 @@ async fn build_dashboard(
         caps_ready,
         caps_total,
         capabilities: caps,
+        tools,
+        tools_rss,
+        tools_running,
+        tool_notice,
         requests: recent.iter().map(request_view).collect(),
     })
+}
+
+fn tool_views(memory: &crate::service::MemorySnapshot) -> (Vec<ToolView>, String, usize) {
+    fn group(memory: &crate::service::MemorySnapshot, id: &str) -> (usize, u64) {
+        memory
+            .groups
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| (g.usage.processes, g.usage.rss_bytes))
+            .unwrap_or((0, 0))
+    }
+
+    fn make(
+        id: &str,
+        label: &str,
+        note: &str,
+        processes: usize,
+        rss: u64,
+        action_url: &str,
+        action_label: &str,
+    ) -> ToolView {
+        let running = processes > 0;
+        ToolView {
+            id: id.to_string(),
+            label: label.to_string(),
+            note: note.to_string(),
+            status_text: if running { "运行中" } else { "未运行" }.to_string(),
+            status_class: if running { "ok" } else { "flat" }.to_string(),
+            running,
+            rss: format_bytes(rss),
+            processes,
+            action_url: action_url.to_string(),
+            action_label: action_label.to_string(),
+        }
+    }
+
+    let (wechat_p, wechat_rss) = group(memory, "wechat");
+    let (xhs_p, xhs_rss) = group(memory, "xhs_browser");
+    let (booking_p, booking_rss) = group(memory, "booking_browser");
+    let (workers_p, workers_rss) = group(memory, "workers");
+
+    let tools = vec![
+        make(
+            "wechat",
+            "微信",
+            if wechat_p > 0 {
+                "用户应用；Gofer 不会主动关闭微信"
+            } else {
+                "打开微信后才能发送微信通知"
+            },
+            wechat_p,
+            wechat_rss,
+            if wechat_p == 0 {
+                "/actions/tools/wechat/open"
+            } else {
+                ""
+            },
+            if wechat_p == 0 { "打开微信" } else { "" },
+        ),
+        make(
+            "xhs_browser",
+            "小红书浏览器",
+            if xhs_p > 0 {
+                "常驻无头浏览器；关闭可释放内存，下次发送会自动重开"
+            } else {
+                "未运行；打开后首次发送更快"
+            },
+            xhs_p,
+            xhs_rss,
+            if xhs_p > 0 {
+                "/actions/tools/xhs/close"
+            } else {
+                "/actions/tools/xhs/open"
+            },
+            if xhs_p > 0 {
+                "关闭浏览器"
+            } else {
+                "打开浏览器"
+            },
+        ),
+        make(
+            "booking_browser",
+            "锁票浏览器",
+            if booking_p > 0 {
+                "锁票/演示任务正在使用"
+            } else {
+                "锁票或演示运行时自动打开"
+            },
+            booking_p,
+            booking_rss,
+            "",
+            "",
+        ),
+        make(
+            "workers",
+            "Gofer workers",
+            "通知/锁票脚本进程",
+            workers_p,
+            workers_rss,
+            "",
+            "",
+        ),
+    ];
+    let total_rss = wechat_rss + xhs_rss + booking_rss + workers_rss;
+    let running = [wechat_p, xhs_p, booking_p, workers_p]
+        .iter()
+        .filter(|p| **p > 0)
+        .count();
+    (tools, format_bytes(total_rss), running)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    let mb = bytes as f64 / 1_048_576.0;
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else {
+        format!("{mb:.0} MB")
+    }
 }
 
 fn request_view(r: &RequestRow) -> RequestView {

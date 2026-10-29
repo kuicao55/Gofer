@@ -8,6 +8,9 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use serde_json::Value;
 
 /// Scripts directory.
 ///
@@ -109,6 +112,80 @@ pub fn notify_xhs(
         cmd.arg("--url").arg(url);
     }
     run_script(cmd, &format!("小红书 {group}"))
+}
+
+/// Actions for the persistent Xiaohongshu `agent-browser` daemon.
+#[derive(Debug, Clone, Copy)]
+pub enum XhsBrowserAction {
+    Status,
+    Open,
+    Close,
+}
+
+impl XhsBrowserAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Open => "open",
+            Self::Close => "close",
+        }
+    }
+
+    fn timeout(self) -> Duration {
+        match self {
+            // A reset may close and relaunch Chromium, then navigate to /chat.
+            Self::Open => Duration::from_secs(120),
+            Self::Close => Duration::from_secs(30),
+            Self::Status => Duration::from_secs(10),
+        }
+    }
+}
+
+/// Open/close/prewarm the WeChat-adjacent Xiaohongshu browser.
+///
+/// The Python helper owns the profile/headless/login details; Gofer only
+/// serializes access with the notify worker and reports the result.
+pub async fn xhs_browser_control(action: XhsBrowserAction) -> Result<Value, String> {
+    let script = script("xhs-notify.py");
+    if !script.exists() {
+        return Err(format!("小红书脚本不存在: {}", script.display()));
+    }
+
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.arg(&script)
+        .arg("--browser")
+        .arg(action.as_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = tokio::time::timeout(action.timeout(), cmd.output())
+        .await
+        .map_err(|_| format!("小红书浏览器 {} 超时", action.as_str()))?
+        .map_err(|e| format!("启动小红书浏览器控制失败: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let last = stdout.lines().last().unwrap_or("").trim();
+    let value: Value = serde_json::from_str(last).map_err(|e| {
+        let detail = if stderr.is_empty() { &stdout } else { &stderr };
+        format!("小红书浏览器控制输出无法解析: {e}; {detail}")
+    })?;
+
+    if !output.status.success() || value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(if stderr.is_empty() {
+                "小红书浏览器控制失败"
+            } else {
+                &stderr
+            });
+        return Err(error.to_string());
+    }
+
+    Ok(value)
 }
 
 #[cfg(test)]

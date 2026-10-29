@@ -153,6 +153,11 @@ async fn first_run_setup_login_logout() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let dashboard = body_text(resp).await;
+    assert!(dashboard.contains("工具与浏览器"));
+    assert!(dashboard.contains("小红书浏览器"));
+    assert!(dashboard.contains("锁票浏览器"));
+    assert!(dashboard.contains("打开浏览器") || dashboard.contains("关闭浏览器"));
 
     // A second setup attempt must not replace the password.
     let resp = app

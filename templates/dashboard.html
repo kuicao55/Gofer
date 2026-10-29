@@ -62,6 +62,44 @@
     </div>
   </section>
 
+  <section class="card" id="tools">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Processes</p>
+        <h2>工具与浏览器</h2>
+        <p>本机进程的 RSS 估算。关闭小红书浏览器可以立即释放内存，需要时会自动重开。</p>
+      </div>
+      <span class="pill">{{ tools_running }} running · {{ tools_rss }}</span>
+    </div>
+
+    {% if !tool_notice.is_empty() %}
+    <div class="alert-strip">{{ tool_notice }}</div>
+    {% endif %}
+
+    <div class="tool-list">
+      {% for t in tools %}
+      <div class="tool-row">
+        <div class="tool-main">
+          <span class="status-dot {% if t.running %}ok{% endif %}"></span>
+          <div>
+            <div class="tool-label">{{ t.label }}</div>
+            <div class="tool-note">{{ t.note }}</div>
+          </div>
+        </div>
+        <div class="tool-meta">
+          <span class="mono">{{ t.status_text }}</span>
+          <span class="mono">{{ t.rss }}</span>
+          {% if !t.action_url.is_empty() %}
+          <form method="post" action="{{ t.action_url }}">
+            <button class="btn ghost small" type="submit">{{ t.action_label }}</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
   <section class="card">
     <div class="card-head">
       <div>

@@ -287,6 +287,68 @@ def ensure_chat_page():
 
 
 
+def _browser_state(action):
+    running, headless, profile = browser_status()
+    return {
+        "ok": True,
+        "action": action,
+        "running": running,
+        "headless": headless,
+        "profile": profile,
+        "profile_matches": bool(profile) and _same_path(profile, DEFAULT_PROFILE),
+    }
+
+
+def browser_control(action):
+    """Open/close/prewarm the persistent Xiaohongshu browser.
+
+    Used by Gofer's Tools panel. Prints exactly one JSON object on stdout.
+    """
+    try:
+        if action == "status":
+            state = _browser_state(action)
+        elif action == "open":
+            ensure_browser_running()
+            ensure_chat_page()
+            state = _browser_state(action)
+            state["ok"] = bool(
+                state["running"] and state["headless"] and state["profile_matches"]
+            )
+            if not state["ok"]:
+                state["error"] = "浏览器已启动，但不是预期的 headless/profile"
+        elif action == "close":
+            before = _browser_state(action)
+            if before["running"] and not before["profile_matches"]:
+                state = {
+                    "ok": False,
+                    "action": action,
+                    "error": "当前 agent-browser 不是小红书 profile，未关闭",
+                }
+            else:
+                subprocess.run(
+                    ["agent-browser", "close"],
+                    capture_output=True, text=True, timeout=20)
+                deadline = time.time() + 5
+                while True:
+                    state = _browser_state(action)
+                    if not state["running"] or time.time() >= deadline:
+                        break
+                    time.sleep(0.25)
+                state["ok"] = not state["running"]
+                if not state["ok"]:
+                    state["error"] = "agent-browser close 后浏览器仍在运行"
+        else:
+            raise RuntimeError(f"未知浏览器操作: {action}")
+    except subprocess.TimeoutExpired as e:
+        state = {"ok": False, "action": action, "error": f"agent-browser 超时: {e}"}
+    except Exception as e:
+        state = {"ok": False, "action": action, "error": str(e)}
+
+    print(json.dumps(state, ensure_ascii=False))
+    if not state.get("ok"):
+        sys.exit(1)
+
+
 def click_group(group):
     """点开指定群聊。精确匹配群名前缀，找不到时重试几次。"""
     ref = None
@@ -614,9 +676,11 @@ def main():
         description="把通知推送到小红书群聊（via agent-browser）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.split("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")[0])
-    p.add_argument("--group", required=True,
-                   help="群聊名称（必填，无默认值）")
-    p.add_argument("--title", required=True, help="通知标题")
+    p.add_argument("--group", default="",
+                   help="群聊名称（发送消息时必填）")
+    p.add_argument("--title", default="", help="通知标题（发送消息时必填）")
+    p.add_argument("--browser", choices=["status", "open", "close"],
+                   help="管理小红书浏览器（供 Gofer 面板使用）")
     p.add_argument("--body", default="", help="通知正文（可选）")
     p.add_argument("--url", default="", help="链接（可选）")
     p.add_argument("--dry-run", action="store_true",
@@ -634,6 +698,13 @@ def main():
                    default=os.environ.get("XHS_WEBHOOK", DEFAULT_WEBHOOK),
                    help="Discord webhook URL（也可用 $XHS_WEBHOOK）")
     args = p.parse_args()
+
+    if args.browser:
+        browser_control(args.browser)
+        return
+
+    if not args.group or not args.title:
+        p.error("--group and --title are required unless --browser is used")
 
     parts = [args.title]
     if args.body:

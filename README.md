@@ -556,7 +556,7 @@ Gofer 会用一行 manifest 告诉 iGlance 自己的地址、内存接口和关�
 3. Gofer 就绪后输出一行：
 
    ```text
-   IGLANCE_SERVICE_MANIFEST {"schema":"iglance.service.v1","service":{"id":"gofer","name":"Gofer","version":"0.5.1"},"base_url":"http://127.0.0.1:8790","auth":{"header":"X-Gofer-Token","type":"header"},"endpoints":{"health":"/health","panel":"/","status":"/api/v1/service","memory":"/api/v1/service/memory","pause":"/api/v1/service/pause","resume":"/api/v1/service/resume","toggle":"/api/v1/service/toggle","stop":"/api/v1/service/stop"}}
+   IGLANCE_SERVICE_MANIFEST {"schema":"iglance.service.v1","service":{"id":"gofer","name":"Gofer","version":"0.6.0"},"base_url":"http://127.0.0.1:8790","auth":{"header":"X-Gofer-Token","type":"header"},"endpoints":{"health":"/health","panel":"/","status":"/api/v1/service","memory":"/api/v1/service/memory","pause":"/api/v1/service/pause","resume":"/api/v1/service/resume","toggle":"/api/v1/service/toggle","stop":"/api/v1/service/stop"}}
    ```
 
 4. iGlance 解析 `base_url` 和 `endpoints`，自动得到：
@@ -591,7 +591,7 @@ curl -H 'X-Gofer-Token: change-me' \
   "service": {
     "id": "gofer",
     "name": "Gofer",
-    "version": "0.5.1",
+    "version": "0.6.0",
     "kind": "headless-service"
   },
   "state": "running",
@@ -765,7 +765,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kuicao.gofer.plist
 
 访问 <http://127.0.0.1:8790>，首次会跳转 `/setup` 创建管理员密码。
 
-- **Overview**：三项能力、预检状态、24h 请求量/成功率、队列、最近请求。
+- **Overview**：三项能力、预检状态、工具与浏览器、24h 请求量/成功率、队列、最近请求。
   每张能力卡片下方有对应入口：微信 / 小红书卡片 → 测试页面；自动锁票卡片 → 锁票演示。
   自动锁票预检项里包含 Discord 通知：未配置为红色，已配置为绿色，点“配置 / 修改”打开设置。
 - **Requests**：完整请求历史（最多 200 条），含 request_id、耗时、来源、结果/错误。
@@ -778,6 +778,27 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kuicao.gofer.plist
 - Overview / Requests 每 5 秒刷新；Tests / Demo 的状态片段每 2 秒刷新。
 
 如果页面样式异常，检查 URL 中的 `app.css?v=...` 是否随版本更新，或强制刷新。
+
+### 工具与浏览器
+
+Overview 的「工具与浏览器」卡片显示本机进程的 RSS 估算：
+
+- **微信**：运行状态、进程数、内存；未运行时可以「打开微信」。Gofer 不会主动关闭微信。
+- **小红书浏览器**：运行状态、进程数、内存；提供「打开浏览器 / 关闭浏览器」。
+  - 打开：确保 `agent-browser` 使用 `~/.agent-browser/profiles/xiaohongshu`、headless 模式，并预热到消息页。
+  - 关闭：执行 `agent-browser close`，立即释放内存；登录态保存在 profile 里，不会丢。
+  - 发送小红书消息时会持有互斥锁；如果正在发送，页面会提示稍后再试，不会中途关闭浏览器。
+- **锁票浏览器**：只读；Playwright 浏览器只在锁票/演示任务运行时出现。
+- **Gofer workers**：通知/锁票脚本进程，只读。
+
+登录态过期时，打开浏览器只会看到登录页；发送流程仍会按原逻辑走扫码恢复。也可以在
+CLI 里直接操作小红书浏览器：
+
+```bash
+python3 scripts/xhs-notify.py --browser status
+python3 scripts/xhs-notify.py --browser open
+python3 scripts/xhs-notify.py --browser close
+```
 
 ---
 
@@ -860,8 +881,8 @@ launchd 模板里设置 `GOFER_SUPERVISED=launchd`，这样更新后由 KeepAliv
 发版：
 
 ```bash
-git tag v0.5.1
-git push origin v0.5.1
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 Release 资产：

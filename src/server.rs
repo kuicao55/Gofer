@@ -106,6 +106,9 @@ pub struct AppState {
     pub demo: Arc<DemoShared>,
     pub demo_cfg: DemoConfig,
     pub browser_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes Xiaohongshu notifications with the Tools panel's
+    /// open/close browser actions.
+    pub xhs_browser_lock: Arc<tokio::sync::Mutex<()>>,
     pub http: reqwest::Client,
     pub paused: AtomicBool,
     pub stopping: AtomicBool,
@@ -197,6 +200,7 @@ impl AppState {
             demo: Arc::new(DemoShared::default()),
             demo_cfg,
             browser_lock: Arc::new(tokio::sync::Mutex::new(())),
+            xhs_browser_lock: Arc::new(tokio::sync::Mutex::new(())),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
@@ -291,6 +295,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/demo", get(web::demo_page))
         .route("/update", get(web::update_page))
         .route("/actions/service/toggle", post(toggle_service))
+        .route("/actions/tools/xhs/open", post(web::action_tools_xhs_open))
+        .route(
+            "/actions/tools/xhs/close",
+            post(web::action_tools_xhs_close),
+        )
+        .route(
+            "/actions/tools/wechat/open",
+            post(web::action_tools_wechat_open),
+        )
         .route("/actions/update/install", post(web::action_update_install))
         .route("/actions/lock/webhook", post(web::action_lock_webhook))
         .route(
@@ -914,6 +927,13 @@ async fn notify_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<NotifyJob>) {
         let _ = st.db.mark_running(&job.request_id).await;
         let started = Instant::now();
         let dry = job.dry_run;
+        // Hands off the shared XHS browser while a send is in flight; the
+        // Tools panel uses try_lock and reports "busy" instead of waiting.
+        let _xhs_guard = if job.channel == "xhs" && !dry {
+            Some(st.xhs_browser_lock.clone().lock_owned().await)
+        } else {
+            None
+        };
         let job2 = job.clone();
         let result = tokio::task::spawn_blocking(move || execute_notify(&job2, dry))
             .await
