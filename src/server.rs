@@ -109,6 +109,8 @@ pub struct AppState {
     /// Serializes Xiaohongshu notifications with the Tools panel's
     /// open/close browser actions.
     pub xhs_browser_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Rolling per-process-group RSS history for the panel sparklines.
+    pub memory: Arc<std::sync::Mutex<crate::service::MemoryTracker>>,
     pub http: reqwest::Client,
     pub paused: AtomicBool,
     pub stopping: AtomicBool,
@@ -201,6 +203,9 @@ impl AppState {
             demo_cfg,
             browser_lock: Arc::new(tokio::sync::Mutex::new(())),
             xhs_browser_lock: Arc::new(tokio::sync::Mutex::new(())),
+            memory: Arc::new(std::sync::Mutex::new(crate::service::MemoryTracker::new(
+                60,
+            ))),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
@@ -235,6 +240,46 @@ impl AppState {
             self.notify_queue.load(Ordering::SeqCst),
             self.lock_queue.load(Ordering::SeqCst),
         )
+    }
+
+    pub fn record_memory(&self, snapshot: crate::service::MemorySnapshot) {
+        match self.memory.lock() {
+            Ok(mut tracker) => tracker.push(snapshot),
+            Err(poisoned) => poisoned.into_inner().push(snapshot),
+        }
+    }
+
+    pub fn memory_snapshot(&self) -> Option<crate::service::MemorySnapshot> {
+        match self.memory.lock() {
+            Ok(tracker) => tracker.latest(),
+            Err(poisoned) => poisoned.into_inner().latest(),
+        }
+    }
+
+    pub fn memory_series(&self, id: &str) -> Vec<u64> {
+        match self.memory.lock() {
+            Ok(tracker) => tracker.series(id),
+            Err(poisoned) => poisoned.into_inner().series(id),
+        }
+    }
+
+    /// Sample process groups every 5 seconds so the panel can draw a live
+    /// sparkline even between page requests. Tests don't start this loop.
+    pub fn start_memory_sampler(self: &Arc<Self>) {
+        let st = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let snapshot = tokio::task::spawn_blocking(crate::service::collect_memory)
+                    .await
+                    .unwrap_or_else(|e| {
+                        crate::service::MemorySnapshot::unavailable(format!(
+                            "内存采样任务失败: {e}"
+                        ))
+                    });
+                st.record_memory(snapshot);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
     }
 
     pub fn api_token(&self) -> Option<String> {
@@ -474,7 +519,7 @@ async fn service_api(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Res
         return *r;
     }
     let (_, ready) = st.diagnostics();
-    let memory = memory_snapshot().await;
+    let memory = current_memory(&st).await;
     let (notify_q, lock_q) = st.queues();
     let display_url = st.display_base_url();
     let state = if st.is_stopping() {
@@ -530,7 +575,7 @@ async fn service_memory_api(State(st): State<Arc<AppState>>, headers: HeaderMap)
         "ok": true,
         "service": "gofer",
         "pid": std::process::id(),
-        "memory": memory_snapshot().await,
+        "memory": current_memory(&st).await,
     }))
     .into_response()
 }
@@ -614,9 +659,15 @@ async fn set_service_paused(st: &Arc<AppState>, paused: bool) {
     }
 }
 
-async fn memory_snapshot() -> crate::service::MemorySnapshot {
+pub async fn current_memory(st: &Arc<AppState>) -> crate::service::MemorySnapshot {
+    if let Some(snapshot) = st.memory_snapshot() {
+        return snapshot;
+    }
     match tokio::task::spawn_blocking(crate::service::collect_memory).await {
-        Ok(snapshot) => snapshot,
+        Ok(snapshot) => {
+            st.record_memory(snapshot.clone());
+            snapshot
+        }
         Err(e) => crate::service::MemorySnapshot::unavailable(format!("内存采集任务失败: {e}")),
     }
 }
@@ -1208,6 +1259,8 @@ pub async fn run(cfg: ServerConfig) -> Result<()> {
         paused,
         demo_cfg,
     });
+
+    state.start_memory_sampler();
 
     if let Ok(n) = state
         .db

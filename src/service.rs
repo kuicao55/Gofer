@@ -142,6 +142,59 @@ impl MemorySnapshot {
     }
 }
 
+/// Process groups shown as per-capability memory cards in the panel.
+pub const TRACKED_GROUPS: &[&str] = &["wechat", "xhs_browser", "booking_browser", "workers"];
+
+/// Rolling memory history for the panel sparklines.
+#[derive(Debug)]
+pub struct MemoryTracker {
+    capacity: usize,
+    latest: Option<MemorySnapshot>,
+    series: HashMap<String, VecDeque<u64>>,
+}
+
+impl MemoryTracker {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(2),
+            latest: None,
+            series: HashMap::new(),
+        }
+    }
+
+    pub fn push(&mut self, snapshot: MemorySnapshot) {
+        self.latest = Some(snapshot.clone());
+        if !snapshot.available {
+            // Don't draw a misleading zero after a failed ps snapshot.
+            return;
+        }
+        for id in TRACKED_GROUPS {
+            let rss = snapshot
+                .groups
+                .iter()
+                .find(|g| g.id == *id)
+                .map(|g| g.usage.rss_bytes)
+                .unwrap_or(0);
+            let series = self.series.entry((*id).to_string()).or_default();
+            series.push_back(rss);
+            while series.len() > self.capacity {
+                series.pop_front();
+            }
+        }
+    }
+
+    pub fn latest(&self) -> Option<MemorySnapshot> {
+        self.latest.clone()
+    }
+
+    pub fn series(&self, id: &str) -> Vec<u64> {
+        self.series
+            .get(id)
+            .map(|s| s.iter().copied().collect())
+            .unwrap_or_default()
+    }
+}
+
 /// Take a fresh memory snapshot. Errors are reported in the snapshot instead of
 /// failing the HTTP request.
 pub fn collect_memory() -> MemorySnapshot {
@@ -290,7 +343,9 @@ fn classify(proc: &ProcInfo, root: u32, descendants: &HashSet<u32>) -> Option<Gr
     if is_xhs_process(&proc.command) {
         return Some(Group::XhsBrowser);
     }
-    if is_booking_browser(&proc.command) {
+    // Only count Playwright browsers spawned by Gofer's own lock/demo
+    // workers, not unrelated Playwright sessions on the same Mac.
+    if descendants.contains(&proc.pid) && is_booking_browser(&proc.command) {
         return Some(Group::BookingBrowser);
     }
     if is_wechat_process(&proc.command) {
@@ -671,6 +726,12 @@ mod tests {
                 "/Applications/WeChat.app/Contents/Frameworks/WeChat Helper.app/Contents/MacOS/WeChat Helper",
             ),
             proc(106, 1, 1_000, "/sbin/launchd"),
+            proc(
+                107,
+                1,
+                16_000,
+                "/Users/me/.cache/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium --user-data-dir=/tmp/other-playwright",
+            ),
         ];
 
         let snapshot = MemorySnapshot::from_processes(&procs, 100);
@@ -734,6 +795,61 @@ mod tests {
         let snapshot = MemorySnapshot::from_processes(&procs, 100);
         assert_eq!(snapshot.xhs_browser.processes, 1);
         assert_eq!(snapshot.xhs_browser.pids, vec![101]);
+    }
+
+    fn memory_snapshot_with(wechat_rss: u64, xhs_rss: u64) -> MemorySnapshot {
+        let mut snapshot = MemorySnapshot {
+            available: true,
+            source: "test".into(),
+            observed_at: "2026-10-29T00:00:00Z".into(),
+            total_rss_bytes: wechat_rss + xhs_rss,
+            total_processes: 2,
+            ..Default::default()
+        };
+        snapshot.groups = vec![
+            MemoryGroup {
+                id: "wechat".into(),
+                label: "微信".into(),
+                usage: ProcessGroup {
+                    rss_bytes: wechat_rss,
+                    processes: usize::from(wechat_rss > 0),
+                    pids: vec![],
+                },
+            },
+            MemoryGroup {
+                id: "xhs_browser".into(),
+                label: "小红书浏览器".into(),
+                usage: ProcessGroup {
+                    rss_bytes: xhs_rss,
+                    processes: usize::from(xhs_rss > 0),
+                    pids: vec![],
+                },
+            },
+        ];
+        snapshot
+    }
+
+    #[test]
+    fn memory_tracker_keeps_a_rolling_window() {
+        let mut tracker = MemoryTracker::new(2);
+        tracker.push(memory_snapshot_with(10, 20));
+        tracker.push(memory_snapshot_with(30, 40));
+        tracker.push(memory_snapshot_with(50, 60));
+
+        assert_eq!(tracker.series("wechat"), vec![30, 50]);
+        assert_eq!(tracker.series("xhs_browser"), vec![40, 60]);
+        assert_eq!(tracker.series("booking_browser"), vec![0, 0]);
+        assert_eq!(tracker.latest().unwrap().total_rss_bytes, 110);
+    }
+
+    #[test]
+    fn memory_tracker_does_not_plot_failed_snapshots() {
+        let mut tracker = MemoryTracker::new(4);
+        tracker.push(memory_snapshot_with(10, 20));
+        tracker.push(MemorySnapshot::unavailable("ps failed"));
+        assert_eq!(tracker.series("wechat"), vec![10]);
+        assert_eq!(tracker.series("xhs_browser"), vec![20]);
+        assert!(!tracker.latest().unwrap().available);
     }
 
     #[test]

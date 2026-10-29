@@ -693,7 +693,7 @@ dialog p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
 }
 
 /* ---------- capability actions ---------- */
-.cap-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+.cap-actions { display: flex; gap: 8px; margin-top: 12px; margin-bottom: 12px; align-items: center; }
 
 /* ---------- inline precheck actions ---------- */
 .check-action {
@@ -702,23 +702,59 @@ dialog p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
 }
 .check-action:hover { text-decoration: underline; }
 
-/* ---------- tools / processes ---------- */
-.tool-list { display: flex; flex-direction: column; }
-.tool-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 0; border-top: 1px solid var(--border);
+/* ---------- per-capability memory card ---------- */
+.cap-memory {
+  margin-top: auto;
+  padding: 10px 11px 9px;
+  border: 1px solid color-mix(in srgb, var(--spark-color) 24%, var(--border));
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--spark-color) 8%, transparent),
+      transparent 72%);
+  color: var(--spark-color);
+  transition: opacity 180ms ease;
 }
-.tool-row:first-child { border-top: 0; }
-.tool-main { display: flex; align-items: flex-start; gap: 8px; flex: 1; min-width: 0; }
-.tool-main .status-dot { margin-top: 5px; flex: none; }
-.tool-label { font-size: 13px; font-weight: 600; }
-.tool-note { font-size: 11px; color: var(--muted); }
-.tool-meta {
-  display: flex; align-items: center; gap: 12px;
-  font-size: 12px; color: var(--muted); flex: none;
+.cap-memory.quiet { opacity: 0.72; }
+.cap-memory-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
 }
-.tool-meta form { margin: 0; }
-@media (max-width: 720px) {
-  .tool-row { align-items: flex-start; flex-direction: column; }
-  .tool-meta { width: 100%; justify-content: flex-start; }
+.cap-memory-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--muted);
 }
+.cap-memory-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--spark-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--spark-color) 16%, transparent);
+}
+.cap-memory-value {
+  font-family: var(--mono); font-size: 15px; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.cap-spark {
+  display: block; width: 100%; height: 34px;
+  margin: 5px 0 3px; overflow: visible;
+}
+.cap-spark-area { fill: currentColor; opacity: 0.11; }
+.cap-spark-line {
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.cap-spark-dot { fill: currentColor; }
+.cap-memory-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 22px;
+}
+.cap-memory-meta { font-size: 10.5px; color: var(--muted); }
+.cap-memory-note {
+  font-size: 10.5px; color: var(--muted); text-align: right;
+  max-width: 62%; line-height: 1.35;
+}
+.cap-memory-action {
+  padding: 4px 9px; font-size: 10.5px; border-radius: 9px;
+  color: var(--ink);
+}
+.cap-memory form { margin: 0; }

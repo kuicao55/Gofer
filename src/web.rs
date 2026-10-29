@@ -76,20 +76,23 @@ pub struct CapabilityView {
     pub queue: usize,
     pub last_at: String,
     pub last_error: String,
+    pub memory: CapabilityMemoryView,
 }
 
 #[derive(Debug, Clone)]
-pub struct ToolView {
-    pub id: String,
-    pub label: String,
-    pub note: String,
-    pub status_text: String,
-    pub status_class: String,
-    pub running: bool,
+pub struct CapabilityMemoryView {
+    pub color: String,
     pub rss: String,
     pub processes: usize,
+    pub running: bool,
+    pub meta: String,
     pub action_url: String,
     pub action_label: String,
+    pub note: String,
+    pub line_path: String,
+    pub area_path: String,
+    pub last_x: String,
+    pub last_y: String,
 }
 
 #[derive(Debug, Clone)]
@@ -128,9 +131,6 @@ struct DashboardTemplate {
     caps_ready: usize,
     caps_total: usize,
     capabilities: Vec<CapabilityView>,
-    tools: Vec<ToolView>,
-    tools_rss: String,
-    tools_running: usize,
     tool_notice: String,
     requests: Vec<RequestView>,
 }
@@ -1283,6 +1283,15 @@ async fn build_dashboard(
     let recent = st.db.recent(12).await.unwrap_or_default();
     let all_total = st.db.total_count().await.unwrap_or(0);
     let (checks, ready) = st.diagnostics();
+    let memory = server::current_memory(st).await;
+    let tool_notice = if memory.available {
+        tool_notice
+    } else {
+        format!(
+            "进程采集失败: {}",
+            memory.error.as_deref().unwrap_or("未知错误")
+        )
+    };
     let (notify_q, lock_q) = st.queues();
     let lock_webhook = st
         .db
@@ -1361,6 +1370,19 @@ async fn build_dashboard(
         let checks_ok = check_views.iter().filter(|c| c.ok).count();
         let checks_total = check_views.len();
         let last_error = st.db.last_for_capability(id, false).await.ok().flatten();
+        let (group_id, color) = match id {
+            "wechat" => ("wechat", "var(--ok)"),
+            "xhs" => ("xhs_browser", "var(--clay)"),
+            "lock" => ("booking_browser", "var(--brass)"),
+            _ => ("", "var(--muted)"),
+        };
+        let (processes, rss) = memory
+            .groups
+            .iter()
+            .find(|g| g.id == group_id)
+            .map(|g| (g.usage.processes, g.usage.rss_bytes))
+            .unwrap_or((0, 0));
+        let memory_view = capability_memory(id, color, processes, rss, &st.memory_series(group_id));
         caps.push(CapabilityView {
             id: id.to_string(),
             label: label.to_string(),
@@ -1380,14 +1402,11 @@ async fn build_dashboard(
                 .and_then(|r| r.error)
                 .map(|e| truncate(e.as_str(), 140))
                 .unwrap_or_default(),
+            memory: memory_view,
         });
     }
 
-    let memory = tokio::task::spawn_blocking(crate::service::collect_memory)
-        .await
-        .unwrap_or_else(|e| {
-            crate::service::MemorySnapshot::unavailable(format!("内存采集任务失败: {e}"))
-        });
+    let memory = server::current_memory(st).await;
     let tool_notice = if memory.available {
         tool_notice
     } else {
@@ -1396,7 +1415,6 @@ async fn build_dashboard(
             memory.error.as_deref().unwrap_or("未知错误")
         )
     };
-    let (tools, tools_rss, tools_running) = tool_views(&memory);
 
     let stats = StatsView {
         total: stats.total,
@@ -1431,121 +1449,137 @@ async fn build_dashboard(
         caps_ready,
         caps_total,
         capabilities: caps,
-        tools,
-        tools_rss,
-        tools_running,
         tool_notice,
         requests: recent.iter().map(request_view).collect(),
     })
 }
 
-fn tool_views(memory: &crate::service::MemorySnapshot) -> (Vec<ToolView>, String, usize) {
-    fn group(memory: &crate::service::MemorySnapshot, id: &str) -> (usize, u64) {
-        memory
-            .groups
-            .iter()
-            .find(|g| g.id == id)
-            .map(|g| (g.usage.processes, g.usage.rss_bytes))
-            .unwrap_or((0, 0))
+fn capability_memory(
+    capability: &str,
+    color: &str,
+    processes: usize,
+    rss: u64,
+    history: &[u64],
+) -> CapabilityMemoryView {
+    let mut values = history.to_vec();
+    if values.is_empty() {
+        values.push(rss);
     }
-
-    fn make(
-        id: &str,
-        label: &str,
-        note: &str,
-        processes: usize,
-        rss: u64,
-        action_url: &str,
-        action_label: &str,
-    ) -> ToolView {
-        let running = processes > 0;
-        ToolView {
-            id: id.to_string(),
-            label: label.to_string(),
-            note: note.to_string(),
-            status_text: if running { "运行中" } else { "未运行" }.to_string(),
-            status_class: if running { "ok" } else { "flat" }.to_string(),
-            running,
-            rss: format_bytes(rss),
-            processes,
-            action_url: action_url.to_string(),
-            action_label: action_label.to_string(),
+    let (line_path, area_path, last_x, last_y) = sparkline_paths(&values);
+    let running = processes > 0;
+    let (action_url, action_label, note) = match capability {
+        "wechat" => {
+            if running {
+                ("", "", "Gofer 不会主动关闭微信")
+            } else {
+                (
+                    "/actions/tools/wechat/open",
+                    "打开微信",
+                    "发送前需要先打开微信",
+                )
+            }
         }
-    }
-
-    let (wechat_p, wechat_rss) = group(memory, "wechat");
-    let (xhs_p, xhs_rss) = group(memory, "xhs_browser");
-    let (booking_p, booking_rss) = group(memory, "booking_browser");
-    let (workers_p, workers_rss) = group(memory, "workers");
-
-    let tools = vec![
-        make(
-            "wechat",
-            "微信",
-            if wechat_p > 0 {
-                "用户应用；Gofer 不会主动关闭微信"
+        "xhs" => {
+            if running {
+                (
+                    "/actions/tools/xhs/close",
+                    "关闭浏览器",
+                    "关闭可释放内存，下次发送自动重开",
+                )
             } else {
-                "打开微信后才能发送微信通知"
-            },
-            wechat_p,
-            wechat_rss,
-            if wechat_p == 0 {
-                "/actions/tools/wechat/open"
-            } else {
-                ""
-            },
-            if wechat_p == 0 { "打开微信" } else { "" },
-        ),
-        make(
-            "xhs_browser",
-            "小红书浏览器",
-            if xhs_p > 0 {
-                "常驻无头浏览器；关闭可释放内存，下次发送会自动重开"
-            } else {
-                "未运行；打开后首次发送更快"
-            },
-            xhs_p,
-            xhs_rss,
-            if xhs_p > 0 {
-                "/actions/tools/xhs/close"
-            } else {
-                "/actions/tools/xhs/open"
-            },
-            if xhs_p > 0 {
-                "关闭浏览器"
-            } else {
-                "打开浏览器"
-            },
-        ),
-        make(
-            "booking_browser",
-            "锁票浏览器",
-            if booking_p > 0 {
+                ("/actions/tools/xhs/open", "打开浏览器", "打开后发送更快")
+            }
+        }
+        "lock" => (
+            "",
+            "",
+            if running {
                 "锁票/演示任务正在使用"
             } else {
                 "锁票或演示运行时自动打开"
             },
-            booking_p,
-            booking_rss,
-            "",
-            "",
         ),
-        make(
-            "workers",
-            "Gofer workers",
-            "通知/锁票脚本进程",
-            workers_p,
-            workers_rss,
-            "",
-            "",
-        ),
-    ];
-    let total_rss = wechat_rss + xhs_rss + booking_rss + workers_rss;
-    let running = [wechat_p, xhs_p, booking_p, workers_p]
+        _ => ("", "", ""),
+    };
+    CapabilityMemoryView {
+        color: color.to_string(),
+        rss: format_bytes(rss),
+        processes,
+        running,
+        meta: if running {
+            format!("{processes} 个进程 · 运行中")
+        } else {
+            "未运行".to_string()
+        },
+        action_url: action_url.to_string(),
+        action_label: action_label.to_string(),
+        note: note.to_string(),
+        line_path,
+        area_path,
+        last_x,
+        last_y,
+    }
+}
+
+/// Build the SVG line/area paths for a 160×34 sparkline.
+fn sparkline_paths(values: &[u64]) -> (String, String, String, String) {
+    let mut vals: Vec<f64> = values.iter().map(|v| *v as f64).collect();
+    if vals.is_empty() {
+        vals.push(0.0);
+    }
+    if vals.len() == 1 {
+        vals.push(vals[0]);
+    }
+
+    let width = 160.0;
+    let height = 34.0;
+    let pad = 3.0;
+    let max = vals.iter().copied().fold(0.0, f64::max);
+    let min = vals.iter().copied().fold(f64::MAX, f64::min);
+    let flat = (max - min).abs() < 1.0;
+    let span = (max - min).max(1.0);
+    let step = width / (vals.len() - 1) as f64;
+    let points: Vec<(f64, f64)> = vals
         .iter()
-        .filter(|p| **p > 0)
-        .count();
-    (tools, format_bytes(total_rss), running)
+        .enumerate()
+        .map(|(i, value)| {
+            let x = i as f64 * step;
+            let y = if max <= 0.0 {
+                height - pad
+            } else if flat {
+                height / 2.0
+            } else {
+                height - pad - ((*value - min) / span) * (height - pad * 2.0)
+            };
+            (x, y)
+        })
+        .collect();
+
+    // Catmull-Rom → cubic Bézier keeps the sparkline soft without adding a
+    // chart dependency. Control points are clamped so a sharp drop can't
+    // overshoot outside the card.
+    let mut line = format!("M {:.1},{:.1}", points[0].0, points[0].1);
+    for i in 0..points.len() - 1 {
+        let p0 = if i == 0 { points[0] } else { points[i - 1] };
+        let p1 = points[i];
+        let p2 = points[i + 1];
+        let p3 = if i + 2 < points.len() {
+            points[i + 2]
+        } else {
+            p2
+        };
+        let c1x = p1.0 + (p2.0 - p0.0) / 6.0;
+        let c1y = (p1.1 + (p2.1 - p0.1) / 6.0).clamp(pad, height - pad);
+        let c2x = p2.0 - (p3.0 - p1.0) / 6.0;
+        let c2y = (p2.1 - (p3.1 - p1.1) / 6.0).clamp(pad, height - pad);
+        line.push_str(&format!(
+            " C {c1x:.1},{c1y:.1} {c2x:.1},{c2y:.1} {:.1},{:.1}",
+            p2.0, p2.1
+        ));
+    }
+    let area = format!("{line} L {width:.1},{height:.1} L 0,{height:.1} Z");
+    let (last_x, last_y) = points.last().copied().unwrap_or((0.0, height));
+    (line, area, format!("{last_x:.1}"), format!("{last_y:.1}"))
 }
 
 fn format_bytes(bytes: u64) -> String {

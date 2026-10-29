@@ -62,44 +62,6 @@
     </div>
   </section>
 
-  <section class="card" id="tools">
-    <div class="card-head">
-      <div>
-        <p class="eyebrow">Processes</p>
-        <h2>工具与浏览器</h2>
-        <p>本机进程的 RSS 估算。关闭小红书浏览器可以立即释放内存，需要时会自动重开。</p>
-      </div>
-      <span class="pill">{{ tools_running }} running · {{ tools_rss }}</span>
-    </div>
-
-    {% if !tool_notice.is_empty() %}
-    <div class="alert-strip">{{ tool_notice }}</div>
-    {% endif %}
-
-    <div class="tool-list">
-      {% for t in tools %}
-      <div class="tool-row">
-        <div class="tool-main">
-          <span class="status-dot {% if t.running %}ok{% endif %}"></span>
-          <div>
-            <div class="tool-label">{{ t.label }}</div>
-            <div class="tool-note">{{ t.note }}</div>
-          </div>
-        </div>
-        <div class="tool-meta">
-          <span class="mono">{{ t.status_text }}</span>
-          <span class="mono">{{ t.rss }}</span>
-          {% if !t.action_url.is_empty() %}
-          <form method="post" action="{{ t.action_url }}">
-            <button class="btn ghost small" type="submit">{{ t.action_label }}</button>
-          </form>
-          {% endif %}
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </section>
-
   <section class="card">
     <div class="card-head">
       <div>
@@ -109,6 +71,11 @@
       </div>
       <span class="pill">{{ caps_total }} capabilities</span>
     </div>
+
+    {% if !tool_notice.is_empty() %}
+    <div class="alert-strip">{{ tool_notice }}</div>
+    {% endif %}
+
     <div class="cap-grid">
       {% for cap in capabilities %}
       <div class="cap-card" data-capability="{{ cap.id }}">
@@ -159,6 +126,29 @@
           {% else if cap.id == "lock" %}
           <a class="btn ghost small" href="/demo">锁票演示</a>
           {% endif %}
+        </div>
+
+        <div class="cap-memory {% if !cap.memory.running %}quiet{% endif %}"
+             style="--spark-color: {{ cap.memory.color }};">
+          <div class="cap-memory-top">
+            <span class="cap-memory-label"><span class="cap-memory-dot"></span>内存</span>
+            <span class="cap-memory-value">{{ cap.memory.rss }}</span>
+          </div>
+          <svg class="cap-spark" viewBox="0 0 160 34" preserveAspectRatio="none" aria-hidden="true">
+            <path class="cap-spark-area" d="{{ cap.memory.area_path }}"></path>
+            <path class="cap-spark-line" d="{{ cap.memory.line_path }}"></path>
+            <circle class="cap-spark-dot" cx="{{ cap.memory.last_x }}" cy="{{ cap.memory.last_y }}" r="2.2"></circle>
+          </svg>
+          <div class="cap-memory-foot">
+            <span class="cap-memory-meta">{{ cap.memory.meta }}</span>
+            {% if !cap.memory.action_url.is_empty() %}
+            <form method="post" action="{{ cap.memory.action_url }}">
+              <button class="btn ghost small cap-memory-action" type="submit">{{ cap.memory.action_label }}</button>
+            </form>
+            {% else %}
+            <span class="cap-memory-note">{{ cap.memory.note }}</span>
+            {% endif %}
+          </div>
         </div>
       </div>
       {% endfor %}
