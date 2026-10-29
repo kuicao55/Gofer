@@ -289,3 +289,88 @@ async fn service_switch_pauses_and_resumes() {
         serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["paused"], false);
 }
+
+#[tokio::test]
+async fn service_api_reports_memory_and_controls() {
+    let st = state(Some("secret"), false).await;
+    let app = server::router(st.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/service")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/service")
+                .header("x-gofer-token", "secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["schema"], "iglance.service.v1");
+    assert_eq!(v["service"]["id"], "gofer");
+    assert_eq!(v["state"], "running");
+    assert_eq!(v["auth"]["token_required"], true);
+    assert_eq!(v["memory"]["source"], "ps-rss");
+    assert!(v["memory"]["gofer"]["processes"].as_u64().unwrap() >= 1);
+    assert!(v["memory"]["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| g["id"] == "service"));
+    assert!(v["controls"]["start"].is_object());
+    assert!(v["controls"]["start"]["binding_command"].is_string());
+    assert!(v["controls"]["start"]["manifest_command"].is_string());
+    assert_eq!(v["controls"]["protocol"]["schema"], "iglance.service.v1");
+    assert_eq!(v["controls"]["stop"]["method"], "POST");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/service/memory")
+                .header("x-gofer-token", "secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(v["memory"]["total_rss_bytes"].as_u64().unwrap() > 0);
+
+    for (uri, paused) in [
+        ("/api/v1/service/pause", true),
+        ("/api/v1/service/resume", false),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("x-gofer-token", "secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(st.is_paused(), paused);
+    }
+}

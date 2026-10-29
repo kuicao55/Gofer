@@ -19,5 +19,6 @@ pub mod lock;
 pub mod maoyan;
 pub mod notify;
 pub mod server;
+pub mod service;
 pub mod update;
 pub mod web;

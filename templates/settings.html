@@ -63,6 +63,21 @@ GOFER_TOKEN={{ token }}</textarea>
     </div>
   </div>
 
+  <div style="margin-top:16px">
+    <p class="eyebrow">iGlance / Services</p>
+    {% if !binding_command.is_empty() %}
+    <textarea id="iglance-bind" class="input mono access-block" readonly rows="4">名称=Gofer
+启动命令={{ binding_command }}
+Token={{ token }}</textarea>
+    <div class="copy-row" style="margin-top:8px">
+      <button class="btn ghost small" type="button" id="iglance-bind-copy" onclick="copyEl('iglance-bind')">复制 iGlance 绑定信息</button>
+      <span class="form-note">iGlance 新建服务时填入名称、启动命令和 token；启动后会自动读取 IGLANCE_SERVICE_MANIFEST。</span>
+    </div>
+    {% else %}
+    <p class="form-note">未找到可用的启动命令。请设置 <span class="mono">GOFER_START_COMMAND</span> 或安装 <span class="mono">start-gofer.sh</span>。</p>
+    {% endif %}
+  </div>
+
   <div class="form-actions" style="margin-top:18px">
     <form method="post" action="/actions/token/rotate"
           onsubmit="return confirm('生成新 token 后旧 token 会立即失效，所有调用方都需要更新。继续？')">

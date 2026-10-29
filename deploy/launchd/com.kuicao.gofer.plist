@@ -48,6 +48,14 @@
     <!-- 面板更新：launchd 模式退出后由 KeepAlive 拉起新二进制 -->
     <key>GOFER_SUPERVISED</key>
     <string>launchd</string>
+    <!-- iGlance / Services：停止时 bootout，启动时 bootstrap 这个 plist。 -->
+    <key>GOFER_LAUNCHD_LABEL</key>
+    <string>com.kuicao.gofer</string>
+    <key>GOFER_LAUNCHD_PLIST</key>
+    <string>/Users/kuicao/Library/LaunchAgents/com.kuicao.gofer.plist</string>
+    <!-- 可选：显式覆盖返回给 iGlance 的启动命令；留空=自动识别。 -->
+    <key>GOFER_START_COMMAND</key>
+    <string></string>
     <!-- 可选：GitHub 只读 token，避免 API 限流 -->
     <key>GOFER_UPDATE_TOKEN</key>
     <string></string>

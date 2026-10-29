@@ -22,6 +22,7 @@ Gofer 是一个独立的 Rust 服务（axum + SQLite + Askama），自带 HTTP A
 - [面板登录与 token 管理](#面板登录与-token-管理)
 - [常用命令](#常用命令)
 - [HTTP API](#http-api)
+- [服务绑定：iGlance / Services](#服务绑定iglance--services)
 - [能力说明与安全边界](#能力说明与安全边界)
 - [Web 面板](#web-面板)
 - [面板测试与锁票演示](#面板测试与锁票演示)
@@ -408,6 +409,10 @@ gofer requests --json --limit 50
 gofer status
 gofer health
 gofer health --json
+
+# 给 iGlance 的绑定 manifest（不需要服务在运行）
+gofer manifest
+gofer manifest --base-url http://127.0.0.1:8790
 ```
 
 远端调用：
@@ -525,8 +530,185 @@ curl -H 'X-Gofer-Token: change-me' \
 | GET | `/v1/requests/:id` | 单个请求 |
 | POST | `/v1/notify` | 微信/小红书 |
 | POST | `/v1/lock` | 锁票 |
+| GET | `/v1/service` | 服务描述 + 实时内存 + 控制命令 |
+| GET | `/v1/service/memory` | 仅内存快照 |
+| POST | `/v1/service/pause` | 暂停接收新请求 |
+| POST | `/v1/service/resume` | 恢复接收新请求 |
+| POST | `/v1/service/toggle` | 切换暂停/恢复 |
+| POST | `/v1/service/stop` | 停止 Gofer 进程 |
 
-兼容旧路径 `/notify`、`/lock`，方便替换旧 agent。
+兼容旧路径 `/notify`、`/lock`，方便替换旧 agent。`/v1/service*` 与 `/api/v1/service*` 等价。
+
+---
+
+## 服务绑定：iGlance / Services
+
+iGlance 的绑定可以很简单：只填 **服务名称、启动命令、API token**。服务启动后，
+Gofer 会用一行 manifest 告诉 iGlance 自己的地址、内存接口和关闭接口。
+
+### 最简绑定流程
+
+1. iGlance 里新增服务：
+   - 名称：`Gofer`
+   - 启动命令：`/Users/me/Applications/Gofer/start-gofer.sh start --manifest`
+   - token：Gofer 面板 Settings 里的 API token（没设置 token 可留空）
+2. 点击「启动」，iGlance 执行命令并捕获 stdout。
+3. Gofer 就绪后输出一行：
+
+   ```text
+   IGLANCE_SERVICE_MANIFEST {"schema":"iglance.service.v1","service":{"id":"gofer","name":"Gofer","version":"0.5.0"},"base_url":"http://127.0.0.1:8790","auth":{"header":"X-Gofer-Token","type":"header"},"endpoints":{"health":"/health","status":"/api/v1/service","memory":"/api/v1/service/memory","pause":"/api/v1/service/pause","resume":"/api/v1/service/resume","toggle":"/api/v1/service/toggle","stop":"/api/v1/service/stop"}}
+   ```
+
+4. iGlance 解析 `base_url` 和 `endpoints`，自动得到：
+   - 状态/内存：`GET <base_url>/api/v1/service`
+   - 关闭：`POST <base_url>/api/v1/service/stop`
+   - 暂停/恢复：`POST <base_url>/api/v1/service/pause` / `resume`
+5. iGlance 把 manifest 缓存到绑定里；以后服务离线时，仍然用同一条启动命令启动。
+
+**token 不放在 manifest 里**，由 iGlance 自己按绑定保存。没有 token 时请求不需要鉴权；
+有 token 时所有 `/api/v1/service*` 请求带 `X-Gofer-Token: <token>`。
+
+iGlance 执行启动命令时要捕获 stdout，逐行找 `IGLANCE_SERVICE_MANIFEST ` 前缀；
+`start-gofer.sh` 最多等待健康检查 10 秒，建议 iGlance 的启动超时设为 15 秒以上。
+
+如果 Gofer 已经在运行，`GET /api/v1/service` 的 `controls.start` 也会给出当前环境对应的
+启动命令和 `manifest_command`，iGlance 可以用于首次绑定时自动填充。
+
+### 服务描述
+
+```bash
+curl -H 'X-Gofer-Token: change-me' \
+  http://127.0.0.1:8790/api/v1/service
+```
+
+关键字段：
+
+```json
+{
+  "schema": "iglance.service.v1",
+  "ok": true,
+  "service": {
+    "id": "gofer",
+    "name": "Gofer",
+    "version": "0.5.0",
+    "kind": "headless-service"
+  },
+  "state": "running",
+  "paused": false,
+  "pid": 12345,
+  "uptime_sec": 3600,
+  "urls": {
+    "base": "http://127.0.0.1:8790",
+    "health": "http://127.0.0.1:8790/health"
+  },
+  "auth": {
+    "header": "X-Gofer-Token",
+    "token_required": true
+  },
+  "memory": {
+    "available": true,
+    "source": "ps-rss",
+    "total_rss_bytes": 435896320,
+    "total_processes": 13,
+    "groups": [
+      { "id": "service", "label": "Gofer", "rss_bytes": 12603392, "processes": 1, "pids": [12345] },
+      { "id": "workers", "label": "Workers", "rss_bytes": 0, "processes": 0, "pids": [] },
+      { "id": "xhs_browser", "label": "小红书浏览器", "rss_bytes": 423292928, "processes": 12, "pids": [12346] },
+      { "id": "booking_browser", "label": "订票浏览器", "rss_bytes": 0, "processes": 0, "pids": [] },
+      { "id": "wechat", "label": "微信", "rss_bytes": 0, "processes": 0, "pids": [] }
+    ],
+    "gofer": { "rss_bytes": 12603392, "processes": 1, "pids": [12345] },
+    "workers": { "rss_bytes": 0, "processes": 0, "pids": [] },
+    "xhs_browser": { "rss_bytes": 423292928, "processes": 12, "pids": [12346] },
+    "booking_browser": { "rss_bytes": 0, "processes": 0, "pids": [] },
+    "wechat": { "rss_bytes": 0, "processes": 0, "pids": [] }
+  },
+  "controls": {
+    "pause": { "method": "POST", "path": "/api/v1/service/pause" },
+    "resume": { "method": "POST", "path": "/api/v1/service/resume" },
+    "stop": { "method": "POST", "path": "/api/v1/service/stop" },
+    "start": {
+      "type": "command",
+      "shell": "/bin/zsh",
+      "command": "'/Users/me/Applications/Gofer/start-gofer.sh' start --manifest",
+      "binding_command": "'/Users/me/Applications/Gofer/start-gofer.sh' start --manifest",
+      "manifest_command": "'/Users/me/Applications/Gofer/gofer' manifest --base-url 'http://127.0.0.1:8790'",
+      "manifest_prefix": "IGLANCE_SERVICE_MANIFEST",
+      "source": "start-gofer.sh"
+    }
+  }
+}
+```
+
+内存口径：
+
+| 字段 | 内容 |
+|---|---|
+| `gofer` | Gofer 主进程 |
+| `workers` | Gofer 派生的 python / uv / 通知 / 锁票进程 |
+| `xhs_browser` | 常驻的 `agent-browser` daemon 与小红书 Chrome（含 helper） |
+| `booking_browser` | 锁票/演示使用的 Playwright Chromium |
+| `wechat` | 微信 App 的全部进程（含 helper）；只要微信在运行就计入，不管是否由 Gofer 启动 |
+| `total_rss_bytes` | 以上各项之和 |
+
+`memory.groups` 是给 iGlance 的通用渲染入口：每个元素有 `id`、`label`、`rss_bytes`、
+`processes`、`pids`。Gofer 同时保留 `gofer/workers/xhs_browser/...` 这些命名分组作为兼容字段；
+其他服务只要返回同样结构的 `groups`，iGlance 不需要为它写专用代码。
+
+数值来自一次 `ps` 快照的 RSS 求和，单位是字节。RSS 对共享内存会重复计算，因此它是
+**估算值**，适合展示趋势和相对大小，不等同于「物理内存占用」。采集失败时
+`memory.available=false`，`error` 给出原因，服务本身不受影响。
+
+### 暂停 / 恢复 / 停止
+
+```bash
+# 暂停：不再接受新的 notify/lock 请求，进程和浏览器都保留
+curl -X POST -H 'X-Gofer-Token: change-me' \
+  http://127.0.0.1:8790/api/v1/service/pause
+
+# 恢复
+curl -X POST -H 'X-Gofer-Token: change-me' \
+  http://127.0.0.1:8790/api/v1/service/resume
+
+# 停止：默认 cleanup=true，会关闭小红书浏览器并结束 Gofer 的 worker
+curl -X POST -H 'X-Gofer-Token: change-me' \
+  'http://127.0.0.1:8790/api/v1/service/stop?cleanup=true'
+```
+
+- `stop` 先返回 `202`，随后清理并退出；通常 1 秒内完成，`agent-browser close` 最长等待 4 秒。
+  调用方应把连接失败视为已停止。
+- `cleanup=true`（默认）会执行 `agent-browser close` 并终止 Gofer 子进程；微信不会被关闭。
+- 只想停止 Gofer 进程、保留浏览器时用 `?cleanup=false`。
+- 停止不会把「暂停」写进数据库；下次启动仍保持停止前的暂停状态。
+
+### 启动命令
+
+Gofer 完全停止后不可能再响应 HTTP，所以启动一定是一条本地命令。常用的三种写法：
+
+```bash
+# start-gofer.sh（推荐，手动绑定时直接填这一条）
+/Users/me/Applications/Gofer/start-gofer.sh start --manifest
+
+# 分别执行：先启动，再只打印 manifest
+/Users/me/Applications/Gofer/start-gofer.sh start
+/Users/me/Applications/Gofer/gofer manifest --base-url http://127.0.0.1:8790
+
+# launchd（plist 已安装时）
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kuicao.gofer.plist
+/Users/me/Applications/Gofer/gofer manifest --base-url http://127.0.0.1:8790
+```
+
+- `gofer manifest` 不需要服务正在运行，只根据 `--base-url`（或 `--bind` / `GOFER_BIND`）打印 manifest。
+- `start-gofer.sh start --manifest` 会在健康检查通过后自动打印 manifest；服务已在运行时也会直接打印。
+- 自定义 `GOFER_START_COMMAND` 如果不会输出 manifest，iGlance 可以继续执行
+  `controls.start.manifest_command`，或者退化为手动填写 `base_url` 后直接轮询。
+- `controls.start` 的来源优先级：`GOFER_START_COMMAND` → launchd → `start-gofer.sh`。
+- iGlance 绑定直接使用 `controls.start.binding_command`：它保证「启动 + 输出 manifest」在一条命令里完成。
+- 用 launchd 常驻时，请使用 `controls.start.command` 里的 `launchctl` 版本，不要再用
+  `start-gofer.sh` 启动，否则可能启动第二个 Gofer 实例。
+
+> `controls.start` 含本机路径和启动方式，只应暴露给可信的本地面板；不要把 Gofer
+> 的 token 和这个接口暴露到不可信网络。
 
 ---
 
@@ -575,7 +757,8 @@ curl -H 'X-Gofer-Token: change-me' \
   每张能力卡片下方有对应入口：微信 / 小红书卡片 → 测试页面；自动锁票卡片 → 锁票演示。
   自动锁票预检项里包含 Discord 通知：未配置为红色，已配置为绿色，点“配置 / 修改”打开设置。
 - **Requests**：完整请求历史（最多 200 条），含 request_id、耗时、来源、结果/错误。
-- **Settings**：查看 / 生成 / 轮转 API token，复制“地址 + token”。
+- **Settings**：查看 / 生成 / 轮转 API token，复制“地址 + token”，以及复制 iGlance 绑定信息
+  （名称、启动命令、token）。
 - **Update**：检查并安装 GitHub Release。
 - 顶部开关可暂停/恢复 Gofer；暂停后 `/v1/notify` 和 `/v1/lock` 返回 `503`，
   已在执行的任务会完成，状态会持久化到 SQLite。
@@ -665,8 +848,8 @@ launchd 模板里设置 `GOFER_SUPERVISED=launchd`，这样更新后由 KeepAliv
 发版：
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 Release 资产：
@@ -736,6 +919,11 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.kuicao.gofer.plist
 ```
 
 > 旧教程里的 `launchctl load/unload` 仍可用，但新版 macOS 建议用 `bootstrap/bootout`。
+
+模板已设置 `GOFER_LAUNCHD_LABEL` 和 `GOFER_LAUNCHD_PLIST`。通过 `/api/v1/service/stop`
+停止时，Gofer 会先 `launchctl bootout` 再退出，避免 `KeepAlive` 立刻拉起；iGlance 等外部
+面板拿到的启动命令会使用 `launchctl bootstrap` 重新加载同一份 plist。若你改了 label 或
+plist 路径，请同步修改这两个环境变量，否则面板重启会失败。
 
 首次启动后打开面板完成 `/setup`，再到 Settings 生成 token。若要让 Gofer 绑定非 loopback
 地址且还没设置过管理员密码，请先在 `127.0.0.1` 上完成初始化，或在 plist 里设置
@@ -826,7 +1014,11 @@ Gofer token: 与 Gofer 的 GOFER_TOKEN 一致
 | `GOFER_DEMO_PYTHON` | 可选；演示脚本使用的 Python（默认 booker `.venv` 或 `uv`） | 空 |
 | `GOFER_UPDATE_TOKEN` | 可选；GitHub 只读 token，避免限流 | 空 |
 | `GOFER_UPDATE_API_BASE` | 可选；GitHub API/镜像地址 | `https://api.github.com` |
-| `GOFER_SUPERVISED` | `launchd` 时更新后由 launchd 重启 | 空 |
+| `GOFER_SUPERVISED` | `launchd` 时更新后由 launchd 重启；停止时也会先 bootout | 空 |
+| `GOFER_START_COMMAND` | 服务描述里返回给 iGlance 的启动命令；覆盖自动发现 | 空 |
+| `GOFER_START_SCRIPT` | 显式指定 `start-gofer.sh` 路径 | 自动发现 |
+| `GOFER_LAUNCHD_LABEL` | launchd job label；用于停止/启动 | `com.kuicao.gofer` |
+| `GOFER_LAUNCHD_PLIST` | launchd plist 路径；用于 `launchctl bootstrap` | `~/Library/LaunchAgents/<label>.plist` |
 | `XHS_WEBHOOK` | 小红书 session 过期时发二维码的 Discord webhook（可选） | 空 |
 | `GOFER_URL` | CLI 默认服务地址 | `http://127.0.0.1:8790` |
 
@@ -1046,6 +1238,7 @@ Gofer/
 │   ├── discord.rs       # 锁票 Discord webhook 通知
 │   ├── maoyan.rs        # 演示用随机影院 API
 │   ├── demo.rs          # 不提交订单的选座演示 worker
+│   ├── service.rs       # 服务描述 + RSS 内存分组 + 启停辅助
 │   └── assets.rs        # 内置脚本/静态资源释放
 ├── templates/           # Askama 页面（含 login/settings/tests/demo）
 ├── web/                 # CSS / htmx / favicon（编译进二进制）

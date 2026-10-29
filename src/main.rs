@@ -150,6 +150,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// Print the one-line iGlance service manifest (no server required).
+    Manifest {
+        #[arg(long, env = "GOFER_BIND", default_value = "127.0.0.1:8790")]
+        bind: String,
+        /// Advertised base URL; defaults to the local URL derived from --bind.
+        #[arg(long, env = "GOFER_PUBLIC_URL")]
+        base_url: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -377,6 +386,14 @@ async fn main() -> Result<()> {
                     );
                 }
             }
+            Ok(())
+        }
+        Command::Manifest { bind, base_url } => {
+            let base = base_url
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| server::base_url_for_bind(&bind));
+            println!("{}", gofer::service::manifest_line(&base));
             Ok(())
         }
     }

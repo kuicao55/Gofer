@@ -270,6 +270,17 @@ async fn token_rotation_is_immediate_and_persistent() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let settings_html = String::from_utf8(
+        resp.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(settings_html.contains("iGlance / Services"));
+    assert!(settings_html.contains("IGLANCE_SERVICE_MANIFEST"));
 
     let resp = app
         .clone()

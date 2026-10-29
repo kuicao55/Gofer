@@ -176,6 +176,7 @@ struct SettingsTemplate {
     token: String,
     token_source: String,
     token_updated_at: String,
+    binding_command: String,
     env_token_present: bool,
     env_password_managed: bool,
     rotated: bool,
@@ -610,6 +611,12 @@ fn settings_template(
     reset: bool,
     error: String,
 ) -> SettingsTemplate {
+    let controls = crate::service::controls(&st.base_url);
+    let binding_command = controls
+        .pointer("/start/binding_command")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
     SettingsTemplate {
         version: server::VERSION.to_string(),
         now: now_label(),
@@ -620,6 +627,7 @@ fn settings_template(
         token: st.api_token().unwrap_or_default(),
         token_source: st.token_source().label().to_string(),
         token_updated_at: st.token_updated_at().unwrap_or_else(|| "—".to_string()),
+        binding_command,
         env_token_present: st
             .env_token
             .as_deref()

@@ -108,6 +108,7 @@ pub struct AppState {
     pub browser_lock: Arc<tokio::sync::Mutex<()>>,
     pub http: reqwest::Client,
     pub paused: AtomicBool,
+    pub stopping: AtomicBool,
 }
 
 pub struct AppStateInit {
@@ -201,6 +202,7 @@ impl AppState {
                 .build()
                 .expect("gofer http client"),
             paused: AtomicBool::new(paused),
+            stopping: AtomicBool::new(false),
         });
         tokio::spawn(notify_worker(state.clone(), notify_rx));
         tokio::spawn(lock_worker(state.clone(), lock_rx));
@@ -218,6 +220,10 @@ impl AppState {
 
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::SeqCst);
+    }
+
+    pub fn is_stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
     }
 
     pub fn queues(&self) -> (usize, usize) {
@@ -323,6 +329,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/requests/:id", get(request_api))
         .route("/api/v1/stats", get(stats_api))
         .route("/v1/stats", get(stats_api))
+        .route("/api/v1/service", get(service_api))
+        .route("/v1/service", get(service_api))
+        .route("/api/v1/service/memory", get(service_memory_api))
+        .route("/v1/service/memory", get(service_memory_api))
+        .route("/api/v1/service/pause", post(service_pause))
+        .route("/v1/service/pause", post(service_pause))
+        .route("/api/v1/service/resume", post(service_resume))
+        .route("/v1/service/resume", post(service_resume))
+        .route("/api/v1/service/toggle", post(service_toggle))
+        .route("/v1/service/toggle", post(service_toggle))
+        .route("/api/v1/service/stop", post(service_stop))
+        .route("/v1/service/stop", post(service_stop))
         .route("/notify", post(notify_handler))
         .route("/v1/notify", post(notify_handler))
         .route("/lock", post(lock_handler))
@@ -397,6 +415,16 @@ struct ListQuery {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct StopQuery {
+    /// Close the Xiaohongshu browser and terminate Gofer's workers (default true).
+    #[serde(default)]
+    cleanup: Option<bool>,
+    /// Run `agent-browser close` (default: same as `cleanup`).
+    #[serde(default)]
+    close_browser: Option<bool>,
+}
+
 // ------------------------- handlers -------------------------
 
 async fn health(State(st): State<Arc<AppState>>) -> impl IntoResponse {
@@ -426,6 +454,157 @@ async fn toggle_service(State(st): State<Arc<AppState>>) -> Response {
         tracing::warn!("persist paused state failed: {e}");
     }
     axum::response::Redirect::to("/").into_response()
+}
+
+async fn service_api(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = auth(&st, &headers) {
+        return *r;
+    }
+    let (_, ready) = st.diagnostics();
+    let memory = memory_snapshot().await;
+    let (notify_q, lock_q) = st.queues();
+    let display_url = st.display_base_url();
+    let state = if st.is_stopping() {
+        "stopping"
+    } else if st.is_paused() {
+        "paused"
+    } else {
+        "running"
+    };
+    Json(json!({
+        "schema": "iglance.service.v1",
+        "ok": true,
+        "service": {
+            "id": "gofer",
+            "name": "Gofer",
+            "version": VERSION,
+            "kind": "headless-service",
+        },
+        "state": state,
+        "paused": st.is_paused(),
+        "stopping": st.is_stopping(),
+        "pid": std::process::id(),
+        "started_at": crate::service::started_at_iso(st.started_at),
+        "uptime_sec": (now_secs() - st.started_at).max(0.0) as u64,
+        "urls": {
+            "base": st.base_url,
+            "display": display_url,
+            "health": format!("{}/health", display_url.trim_end_matches('/')),
+        },
+        "auth": {
+            "header": "X-Gofer-Token",
+            "token_required": st.token_required(),
+        },
+        "queue": {
+            "notify": notify_q,
+            "lock": lock_q,
+            "demo": st.demo_queue.load(Ordering::SeqCst),
+            "demo_running": st.demo.is_running(),
+        },
+        "ready": ready,
+        "memory": memory,
+        "controls": crate::service::controls(&st.base_url),
+    }))
+    .into_response()
+}
+
+async fn service_memory_api(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = auth(&st, &headers) {
+        return *r;
+    }
+    Json(json!({
+        "ok": true,
+        "service": "gofer",
+        "pid": std::process::id(),
+        "memory": memory_snapshot().await,
+    }))
+    .into_response()
+}
+
+async fn service_pause(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = auth(&st, &headers) {
+        return *r;
+    }
+    set_service_paused(&st, true).await;
+    Json(json!({"ok": true, "state": "paused", "paused": true})).into_response()
+}
+
+async fn service_resume(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = auth(&st, &headers) {
+        return *r;
+    }
+    set_service_paused(&st, false).await;
+    Json(json!({"ok": true, "state": "running", "paused": false})).into_response()
+}
+
+async fn service_toggle(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = auth(&st, &headers) {
+        return *r;
+    }
+    let paused = !st.is_paused();
+    set_service_paused(&st, paused).await;
+    let state = if paused { "paused" } else { "running" };
+    Json(json!({"ok": true, "state": state, "paused": paused})).into_response()
+}
+
+async fn service_stop(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<StopQuery>,
+) -> Response {
+    if let Err(r) = auth(&st, &headers) {
+        return *r;
+    }
+    if st.stopping.swap(true, Ordering::SeqCst) {
+        return (
+            StatusCode::ACCEPTED,
+            Json(json!({"ok": true, "state": "stopping", "already_stopping": true})),
+        )
+            .into_response();
+    }
+
+    let cleanup = q.cleanup.unwrap_or(true);
+    let close_browser = q.close_browser.unwrap_or(cleanup);
+    // Reject new work immediately, but do not persist the pause: after the
+    // service is started again it should resume its previous paused state.
+    st.set_paused(true);
+
+    tokio::spawn(async move {
+        // Give the HTTP response time to reach the client.
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        if cleanup {
+            crate::service::stop_cleanup(close_browser).await;
+        }
+        crate::service::remove_pid_file();
+        crate::service::bootout_launchd().await;
+        std::process::exit(0);
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "ok": true,
+            "state": "stopping",
+            "cleanup": cleanup,
+            "close_browser": close_browser,
+            "message": "Gofer 正在停止；完全停止后使用 controls.start 中的命令重新启动。",
+        })),
+    )
+        .into_response()
+}
+
+async fn set_service_paused(st: &Arc<AppState>, paused: bool) {
+    st.set_paused(paused);
+    if let Err(e) = st.db.set_paused(paused).await {
+        tracing::warn!("persist paused state failed: {e}");
+    }
+}
+
+async fn memory_snapshot() -> crate::service::MemorySnapshot {
+    match tokio::task::spawn_blocking(crate::service::collect_memory).await {
+        Ok(snapshot) => snapshot,
+        Err(e) => crate::service::MemorySnapshot::unavailable(format!("内存采集任务失败: {e}")),
+    }
 }
 
 async fn capabilities_api(State(st): State<Arc<AppState>>) -> impl IntoResponse {
@@ -1048,7 +1227,7 @@ pub async fn run(cfg: ServerConfig) -> Result<()> {
     Ok(())
 }
 
-fn base_url_for_bind(bind: &str) -> String {
+pub fn base_url_for_bind(bind: &str) -> String {
     let (host, port) = bind.rsplit_once(':').unwrap_or((bind, "8790"));
     let host = match host {
         "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
