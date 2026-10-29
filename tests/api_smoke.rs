@@ -325,6 +325,7 @@ async fn service_api_reports_memory_and_controls() {
     assert_eq!(v["service"]["id"], "gofer");
     assert_eq!(v["state"], "running");
     assert_eq!(v["auth"]["token_required"], true);
+    assert_eq!(v["urls"]["panel"], "http://127.0.0.1:8790/");
     assert_eq!(v["memory"]["source"], "ps-rss");
     assert!(v["memory"]["gofer"]["processes"].as_u64().unwrap() >= 1);
     assert!(v["memory"]["groups"]

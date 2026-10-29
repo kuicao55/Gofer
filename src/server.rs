@@ -490,6 +490,7 @@ async fn service_api(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Res
             "base": st.base_url,
             "display": display_url,
             "health": format!("{}/health", display_url.trim_end_matches('/')),
+            "panel": format!("{}/", display_url.trim_end_matches('/')),
         },
         "auth": {
             "header": "X-Gofer-Token",

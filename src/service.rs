@@ -197,6 +197,7 @@ pub fn manifest_line(base_url: &str) -> String {
         },
         "endpoints": {
             "health": "/health",
+            "panel": "/",
             "status": "/api/v1/service",
             "memory": "/api/v1/service/memory",
             "pause": "/api/v1/service/pause",
@@ -753,6 +754,7 @@ mod tests {
         assert_eq!(v["base_url"], "http://127.0.0.1:8790");
         assert_eq!(v["auth"]["header"], "X-Gofer-Token");
         assert_eq!(v["endpoints"]["health"], "/health");
+        assert_eq!(v["endpoints"]["panel"], "/");
         assert_eq!(v["endpoints"]["status"], "/api/v1/service");
         assert_eq!(v["endpoints"]["memory"], "/api/v1/service/memory");
         assert_eq!(v["endpoints"]["stop"], "/api/v1/service/stop");

@@ -556,13 +556,14 @@ Gofer 会用一行 manifest 告诉 iGlance 自己的地址、内存接口和关�
 3. Gofer 就绪后输出一行：
 
    ```text
-   IGLANCE_SERVICE_MANIFEST {"schema":"iglance.service.v1","service":{"id":"gofer","name":"Gofer","version":"0.5.0"},"base_url":"http://127.0.0.1:8790","auth":{"header":"X-Gofer-Token","type":"header"},"endpoints":{"health":"/health","status":"/api/v1/service","memory":"/api/v1/service/memory","pause":"/api/v1/service/pause","resume":"/api/v1/service/resume","toggle":"/api/v1/service/toggle","stop":"/api/v1/service/stop"}}
+   IGLANCE_SERVICE_MANIFEST {"schema":"iglance.service.v1","service":{"id":"gofer","name":"Gofer","version":"0.5.1"},"base_url":"http://127.0.0.1:8790","auth":{"header":"X-Gofer-Token","type":"header"},"endpoints":{"health":"/health","panel":"/","status":"/api/v1/service","memory":"/api/v1/service/memory","pause":"/api/v1/service/pause","resume":"/api/v1/service/resume","toggle":"/api/v1/service/toggle","stop":"/api/v1/service/stop"}}
    ```
 
 4. iGlance 解析 `base_url` 和 `endpoints`，自动得到：
    - 状态/内存：`GET <base_url>/api/v1/service`
    - 关闭：`POST <base_url>/api/v1/service/stop`
    - 暂停/恢复：`POST <base_url>/api/v1/service/pause` / `resume`
+   - 网页面板：`endpoints.panel`（相对 `base_url`；Gofer 为 `/`）
 5. iGlance 把 manifest 缓存到绑定里；以后服务离线时，仍然用同一条启动命令启动。
 
 **token 不放在 manifest 里**，由 iGlance 自己按绑定保存。没有 token 时请求不需要鉴权；
@@ -590,7 +591,7 @@ curl -H 'X-Gofer-Token: change-me' \
   "service": {
     "id": "gofer",
     "name": "Gofer",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "kind": "headless-service"
   },
   "state": "running",
@@ -599,7 +600,9 @@ curl -H 'X-Gofer-Token: change-me' \
   "uptime_sec": 3600,
   "urls": {
     "base": "http://127.0.0.1:8790",
-    "health": "http://127.0.0.1:8790/health"
+    "display": "http://127.0.0.1:8790",
+    "health": "http://127.0.0.1:8790/health",
+    "panel": "http://127.0.0.1:8790/"
   },
   "auth": {
     "header": "X-Gofer-Token",
@@ -658,6 +661,15 @@ curl -H 'X-Gofer-Token: change-me' \
 数值来自一次 `ps` 快照的 RSS 求和，单位是字节。RSS 对共享内存会重复计算，因此它是
 **估算值**，适合展示趋势和相对大小，不等同于「物理内存占用」。采集失败时
 `memory.available=false`，`error` 给出原因，服务本身不受影响。
+
+### 网页面板
+
+如果服务带 Web 面板，manifest 的 `endpoints.panel` 给出相对 `base_url` 的路径，运行时
+`GET /api/v1/service` 的 `urls.panel` 给出完整地址。Gofer 的面板就在根路径 `/`。
+
+iGlance 可以在服务 `running` / `paused` 时显示「Open Panel」按钮，用默认浏览器打开；
+没有 `panel` 字段的服务不显示按钮。打开面板仍需管理员登录，iGlance 不应自动登录或把
+token 放进 URL。
 
 ### 暂停 / 恢复 / 停止
 
@@ -848,8 +860,8 @@ launchd 模板里设置 `GOFER_SUPERVISED=launchd`，这样更新后由 KeepAliv
 发版：
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.5.1
+git push origin v0.5.1
 ```
 
 Release 资产：
