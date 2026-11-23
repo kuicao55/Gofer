@@ -139,6 +139,9 @@ pub struct NotifyJob {
     pub message: String,
     pub url: Option<String>,
     pub group: Option<String>,
+    /// The exact text handed to the channel script. Built once at enqueue so
+    /// the panel history and the delivered message cannot drift apart.
+    pub text: String,
     /// Resolved at enqueue time. Panel tests may override the global dry-run.
     pub dry_run: bool,
 }
@@ -765,7 +768,8 @@ pub(crate) async fn enqueue_notify(
             .into()
         });
     let id = new_id();
-    let preview = preview_text(req.message);
+    let text = compose_notify_text(&channel, &title, req.message, req.url);
+    let preview = notify_preview(&text, &title);
     st.db
         .insert_queued(&id, &channel, req.source, &title, &preview, &req.payload)
         .await
@@ -778,6 +782,7 @@ pub(crate) async fn enqueue_notify(
         message: req.message.to_string(),
         url: req.url.map(String::from),
         group,
+        text,
         dry_run: req.dry_run.unwrap_or(st.dry_run),
     };
     if st.notify_tx.try_send(job).is_err() {
@@ -961,13 +966,52 @@ pub(crate) fn new_id() -> String {
     format!("g_{}", &uuid::Uuid::new_v4().to_string()[..8])
 }
 
-fn preview_text(message: &str) -> String {
-    let one_line = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one_line.chars().count() > 160 {
-        format!("{}…", one_line.chars().take(160).collect::<String>())
-    } else {
-        one_line
+/// The exact text delivered for a notify request.
+///
+/// This is the single source of truth: the same string is stored for the panel
+/// history and handed to the channel script, so what the UI shows is exactly
+/// what gets sent. XHS puts title, body and link on separate lines; WeChat keeps
+/// a blank line between title and body.
+pub(crate) fn compose_notify_text(
+    channel: &str,
+    title: &str,
+    message: &str,
+    url: Option<&str>,
+) -> String {
+    match channel {
+        "xhs" => {
+            let mut parts: Vec<&str> = Vec::new();
+            if !title.is_empty() {
+                parts.push(title);
+            }
+            if !message.is_empty() {
+                parts.push(message);
+            }
+            if let Some(url) = url.map(str::trim).filter(|u| !u.is_empty()) {
+                parts.push(url);
+            }
+            parts.join("\n")
+        }
+        _ => {
+            if title.is_empty() {
+                message.to_string()
+            } else {
+                format!("{title}\n\n{message}")
+            }
+        }
     }
+}
+
+/// The part of `text` shown under the title in the history list.
+///
+/// The template renders `title` and then `preview` as separate blocks, so strip
+/// the title plus its single following newline. Appending this preview to the
+/// rendered title reproduces `text` exactly.
+pub(crate) fn notify_preview(text: &str, title: &str) -> String {
+    text.strip_prefix(title)
+        .and_then(|rest| rest.strip_prefix('\n'))
+        .unwrap_or(text)
+        .to_string()
 }
 
 // ------------------------- workers -------------------------
@@ -999,7 +1043,11 @@ async fn notify_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<NotifyJob>) {
                         true,
                         duration,
                         &summary,
-                        Some(&json!({"kind": "notify", "dry_run": dry})),
+                        Some(&json!({
+                            "kind": "notify",
+                            "dry_run": dry,
+                            "text": job.text,
+                        })),
                         None,
                     )
                     .await;
@@ -1015,17 +1063,13 @@ async fn notify_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<NotifyJob>) {
 }
 
 fn execute_notify(job: &NotifyJob, dry_run: bool) -> Result<String, String> {
-    let text = if job.title.is_empty() {
-        job.message.clone()
-    } else {
-        format!("{}\n\n{}", job.title, job.message)
-    };
+    let text = job.text.as_str();
     match job.channel.as_str() {
         "wechat" => {
             if dry_run {
                 Ok(format!("[dry-run] 微信: {}", text.replace('\n', " / ")))
             } else {
-                notify::notify_wechat(&text)
+                notify::notify_wechat(text)
             }
         }
         "xhs" => {
@@ -1039,7 +1083,7 @@ fn execute_notify(job: &NotifyJob, dry_run: bool) -> Result<String, String> {
                     text.replace('\n', " / ")
                 ))
             } else {
-                notify::notify_xhs(group, &job.title, &job.message, job.url.as_deref())
+                notify::notify_xhs(group, text)
             }
         }
         other => Err(format!("unknown channel: {other}")),
@@ -1315,4 +1359,51 @@ pub fn now_secs() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod notify_text_tests {
+    use super::*;
+
+    #[test]
+    fn xhs_text_joins_title_body_and_url_on_separate_lines() {
+        let text = compose_notify_text(
+            "xhs",
+            "🎟 新增场次",
+            "影院｜13:00\n影院｜16:00",
+            Some("https://www.maoyan.com/cinema/37534"),
+        );
+        assert_eq!(
+            text,
+            "🎟 新增场次\n影院｜13:00\n影院｜16:00\nhttps://www.maoyan.com/cinema/37534"
+        );
+    }
+
+    #[test]
+    fn xhs_text_omits_blank_url() {
+        let text = compose_notify_text("xhs", "t", "b", Some("  "));
+        assert_eq!(text, "t\nb");
+    }
+
+    #[test]
+    fn wechat_text_keeps_blank_line_after_title() {
+        assert_eq!(compose_notify_text("wechat", "t", "b", None), "t\n\nb");
+        assert_eq!(compose_notify_text("wechat", "", "b", None), "b");
+    }
+
+    #[test]
+    fn title_plus_rendered_preview_reproduces_sent_text() {
+        for (channel, url) in [
+            ("xhs", Some("https://example.com")),
+            ("xhs", None),
+            ("wechat", None),
+        ] {
+            let title = "标题";
+            let text = compose_notify_text(channel, title, "第一行\n第二行", url);
+            let preview = notify_preview(&text, title);
+            // The template renders `title` and `preview` in separate blocks, so
+            // title + newline + preview must equal the delivered text.
+            assert_eq!(format!("{title}\n{preview}"), text, "channel={channel}");
+        }
+    }
 }

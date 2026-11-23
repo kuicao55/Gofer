@@ -4,6 +4,7 @@
 用法:
     xhs-notify --group test --title "预售开启 🎬" --body "..."
     xhs-notify --group test --title "预售开启 🎬" --body "..." --url "https://..."
+    xhs-notify --group test --text $'标题\n正文\nhttps://...'   # 完整文本原样发送
     xhs-notify --title "hi" --dry-run            # 只打印不发
     xhs-notify --group test --title "..." --keep-chat   # 发完不跳 about:blank（调试用）
 
@@ -394,7 +395,11 @@ def type_and_send(text):
         "(() => { const el = document.querySelector('[contenteditable]');"
         "if (!el) return 'no editor'; el.focus(); return 'ok'; })()")
     time.sleep(0.1)
-    ab("keyboard", "type", text)
+    # 用 inserttext 而不是 type：type 会把每个 "\n" 变成真实 Enter keydown，
+    # 而聊天框 Enter = 发送，多行正文因此会被拆成多条消息（发送后重渲染时
+    # 甚至可能吞掉紧跟其后的那一行）。inserttext 不产生按键事件，换行原样
+    # 插入，最后只按一次 Enter 把整段作为一条消息发出去。
+    ab("keyboard", "inserttext", text)
     ab("press", "Enter")
 
 
@@ -681,6 +686,9 @@ def main():
     p.add_argument("--title", default="", help="通知标题（发送消息时必填）")
     p.add_argument("--browser", choices=["status", "open", "close"],
                    help="管理小红书浏览器（供 Gofer 面板使用）")
+    p.add_argument("--text", default="",
+                   help="完整消息文本，原样作为一条消息发送（优先于"
+                        " --title/--body/--url；换行不会被当成回车）")
     p.add_argument("--body", default="", help="通知正文（可选）")
     p.add_argument("--url", default="", help="链接（可选）")
     p.add_argument("--dry-run", action="store_true",
@@ -703,15 +711,20 @@ def main():
         browser_control(args.browser)
         return
 
-    if not args.group or not args.title:
-        p.error("--group and --title are required unless --browser is used")
+    if not args.group or not (args.text or args.title):
+        p.error("--group and (--text or --title) are required "
+                "unless --browser is used")
 
-    parts = [args.title]
-    if args.body:
-        parts.append(args.body)
-    if args.url:
-        parts.append(args.url)
-    text = "\n".join(parts)
+    if args.text:
+        # Gofer 传来的就是历史里展示的完整文本，原样发送。
+        text = args.text
+    else:
+        parts = [args.title]
+        if args.body:
+            parts.append(args.body)
+        if args.url:
+            parts.append(args.url)
+        text = "\n".join(parts)
 
     print(f"[xhs-notify] group={args.group!r}")
     print(f"[xhs-notify] 文本:\n{text}\n")

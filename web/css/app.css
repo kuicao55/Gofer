@@ -602,7 +602,7 @@ dialog p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
 .req-source { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .req-content { min-width: 0; }
 .req-title { font-size: 13px; font-weight: 500; line-height: 1.45; }
-.req-preview { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+.req-preview { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .req-ok { color: var(--ok); font-size: 11px; margin-top: 5px; }
 .req-error { color: var(--bad); font-size: 11px; margin-top: 5px; overflow-wrap: anywhere; }
 @media (max-width: 1000px) {

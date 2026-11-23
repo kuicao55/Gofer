@@ -85,13 +85,11 @@ pub fn notify_wechat(message: &str) -> Result<String, String> {
     run_script(cmd, "微信")
 }
 
-/// Send a message to a Xiaohongshu group by name.
-pub fn notify_xhs(
-    group: &str,
-    title: &str,
-    body: &str,
-    url: Option<&str>,
-) -> Result<String, String> {
+/// Send `text` to a Xiaohongshu group by name.
+///
+/// The caller passes the already-composed text (see [`crate::server`]) so the
+/// message delivered here is exactly the one shown in the request history.
+pub fn notify_xhs(group: &str, text: &str) -> Result<String, String> {
     let group = group.trim();
     if group.is_empty() {
         return Err("小红书群名不能为空".into());
@@ -104,13 +102,8 @@ pub fn notify_xhs(
     cmd.arg(&script)
         .arg("--group")
         .arg(group)
-        .arg("--title")
-        .arg(title)
-        .arg("--body")
-        .arg(body);
-    if let Some(url) = url.filter(|u| !u.trim().is_empty()) {
-        cmd.arg("--url").arg(url);
-    }
+        .arg("--text")
+        .arg(text);
     run_script(cmd, &format!("小红书 {group}"))
 }
 
@@ -194,7 +187,7 @@ mod tests {
 
     #[test]
     fn empty_xhs_group_is_rejected_before_spawning() {
-        let err = notify_xhs("", "t", "b", None).unwrap_err();
+        let err = notify_xhs("", "t").unwrap_err();
         assert!(err.contains("群名"));
     }
 }
