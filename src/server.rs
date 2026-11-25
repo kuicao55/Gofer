@@ -768,7 +768,7 @@ pub(crate) async fn enqueue_notify(
             .into()
         });
     let id = new_id();
-    let text = compose_notify_text(&channel, &title, req.message, req.url);
+    let text = compose_notify_text(&channel, &title, req.message);
     let preview = notify_preview(&text, &title);
     st.db
         .insert_queued(&id, &channel, req.source, &title, &preview, &req.payload)
@@ -970,14 +970,10 @@ pub(crate) fn new_id() -> String {
 ///
 /// This is the single source of truth: the same string is stored for the panel
 /// history and handed to the channel script, so what the UI shows is exactly
-/// what gets sent. XHS puts title, body and link on separate lines; WeChat keeps
-/// a blank line between title and body.
-pub(crate) fn compose_notify_text(
-    channel: &str,
-    title: &str,
-    message: &str,
-    url: Option<&str>,
-) -> String {
+/// what gets sent. XHS puts the title and body on separate lines; WeChat keeps
+/// a blank line between them. The request's `url` is intentionally not part of
+/// the delivered text (ticket-tracker sends one, but we do not forward it).
+pub(crate) fn compose_notify_text(channel: &str, title: &str, message: &str) -> String {
     match channel {
         "xhs" => {
             let mut parts: Vec<&str> = Vec::new();
@@ -986,9 +982,6 @@ pub(crate) fn compose_notify_text(
             }
             if !message.is_empty() {
                 parts.push(message);
-            }
-            if let Some(url) = url.map(str::trim).filter(|u| !u.is_empty()) {
-                parts.push(url);
             }
             parts.join("\n")
         }
@@ -1047,6 +1040,8 @@ async fn notify_worker(st: Arc<AppState>, mut rx: mpsc::Receiver<NotifyJob>) {
                             "kind": "notify",
                             "dry_run": dry,
                             "text": job.text,
+                            // Kept for traceability; it is no longer part of `text`.
+                            "url": job.url,
                         })),
                         None,
                     )
@@ -1366,40 +1361,22 @@ mod notify_text_tests {
     use super::*;
 
     #[test]
-    fn xhs_text_joins_title_body_and_url_on_separate_lines() {
-        let text = compose_notify_text(
-            "xhs",
-            "🎟 新增场次",
-            "影院｜13:00\n影院｜16:00",
-            Some("https://www.maoyan.com/cinema/37534"),
-        );
-        assert_eq!(
-            text,
-            "🎟 新增场次\n影院｜13:00\n影院｜16:00\nhttps://www.maoyan.com/cinema/37534"
-        );
-    }
-
-    #[test]
-    fn xhs_text_omits_blank_url() {
-        let text = compose_notify_text("xhs", "t", "b", Some("  "));
-        assert_eq!(text, "t\nb");
+    fn xhs_text_joins_title_and_body_on_separate_lines() {
+        let text = compose_notify_text("xhs", "🎟 新增场次", "影院｜13:00\n影院｜16:00");
+        assert_eq!(text, "🎟 新增场次\n影院｜13:00\n影院｜16:00");
     }
 
     #[test]
     fn wechat_text_keeps_blank_line_after_title() {
-        assert_eq!(compose_notify_text("wechat", "t", "b", None), "t\n\nb");
-        assert_eq!(compose_notify_text("wechat", "", "b", None), "b");
+        assert_eq!(compose_notify_text("wechat", "t", "b"), "t\n\nb");
+        assert_eq!(compose_notify_text("wechat", "", "b"), "b");
     }
 
     #[test]
     fn title_plus_rendered_preview_reproduces_sent_text() {
-        for (channel, url) in [
-            ("xhs", Some("https://example.com")),
-            ("xhs", None),
-            ("wechat", None),
-        ] {
+        for channel in ["xhs", "wechat"] {
             let title = "标题";
-            let text = compose_notify_text(channel, title, "第一行\n第二行", url);
+            let text = compose_notify_text(channel, title, "第一行\n第二行");
             let preview = notify_preview(&text, title);
             // The template renders `title` and `preview` in separate blocks, so
             // title + newline + preview must equal the delivered text.
